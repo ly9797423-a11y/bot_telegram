@@ -21,7 +21,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, 
-    CallbackQueryHandler, ContextTypes, filters
+    CallbackQueryHandler, ContextTypes, filters,
+    ConversationHandler
 )
 from telegram.constants import ParseMode
 import google.generativeai as genai
@@ -32,6 +33,9 @@ BOT_USERNAME = "@FC4Xbot"
 ADMIN_ID = 6130994941
 SUPPORT_USERNAME = "Allawi04"
 GEMINI_API_KEY = "AIzaSyAqlug21bw_eI60ocUtc1Z76NhEUc-zuzY"
+
+# ============= حالات المحادثة =============
+ADMIN_MENU, CHARGE_USER, CHARGE_AMOUNT, PRICE_CHANGE, MATERIAL_ADD = range(5)
 
 # ============= إعداد التسعير =============
 SERVICE_PRICES = {
@@ -99,7 +103,7 @@ class UserManager:
                 "transactions": [],
                 "exemption_scores": [],
                 "used_services": [],
-                "pending_scores": []  # درجات مؤقتة للإعفاء
+                "pending_scores": []
             }
             self.save_users()
             logger.info(f"New user created: {user_id}")
@@ -110,7 +114,6 @@ class UserManager:
         user = self.get_user(user_id)
         user["balance"] = user.get("balance", 0) + amount
         
-        # تسجيل المعاملة
         transaction = {
             "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "amount": amount,
@@ -127,10 +130,7 @@ class UserManager:
         """التحقق مما إذا كان المستخدم يمتلك رصيداً كافياً للخدمة"""
         user = self.get_user(user_id)
         price = SERVICE_PRICES.get(service, 1000)
-        result = user.get("balance", 0) >= price
-        if not result:
-            logger.info(f"User {user_id} cannot afford {service}: {user.get('balance', 0)} < {price}")
-        return result
+        return user.get("balance", 0) >= price
     
     def charge_service(self, user_id: int, service: str) -> bool:
         """خصم تكلفة الخدمة من رصيد المستخدم"""
@@ -146,7 +146,6 @@ class UserManager:
             self.save_users()
             logger.info(f"Charged user {user_id} for {service}: {price}")
             return True
-        logger.warning(f"Failed to charge user {user_id} for {service}: insufficient balance")
         return False
     
     def add_pending_score(self, user_id: int, score: float):
@@ -209,13 +208,11 @@ class AIService:
             if not self.model:
                 return "❌ خدمة الذكاء الاصطناعي غير متاحة حالياً"
             
-            # قراءة نص PDF
             text = self.extract_text_from_pdf(pdf_path)
             
             if len(text) < 50:
                 return "❌ لم يتم العثور على نص كافي في الملف"
             
-            # تلخيص النص
             prompt = f"""
             قم بتلخيص النص التعليمي التالي مع الحفاظ على المعلومات المهمة:
             - احذف المعلومات غير الأساسية
@@ -277,20 +274,17 @@ class AIService:
             c = canvas.Canvas(output_path, pagesize=letter)
             width, height = letter
             
-            # إضافة عنوان
             c.setFont("Helvetica-Bold", 16)
             c.drawString(50, height - 50, "تلخيص الملزمة التعليمية")
             c.line(50, height - 60, width - 50, height - 60)
             
-            # إضافة النص الأصلي المختصر
             c.setFont("Helvetica", 12)
             y_position = height - 100
             c.drawString(50, y_position, "النص الأصلي (مختصر):")
             y_position -= 20
             
-            # تقطيع النص الأصلي
             original_lines = original_text[:500].split('\n')
-            for line in original_lines[:10]:  # عرض أول 10 أسطر فقط
+            for line in original_lines[:10]:
                 if y_position < 100:
                     c.showPage()
                     y_position = height - 50
@@ -298,14 +292,12 @@ class AIService:
                 c.drawString(50, y_position, line[:80])
                 y_position -= 20
             
-            # إضافة التلخيص
             y_position -= 30
             c.setFont("Helvetica-Bold", 14)
             c.drawString(50, y_position, "التلخيص:")
             y_position -= 20
             c.setFont("Helvetica", 12)
             
-            # تقطيع التلخيص
             summary_lines = summary.split('\n')
             for line in summary_lines:
                 if y_position < 100:
@@ -313,7 +305,6 @@ class AIService:
                     y_position = height - 50
                     c.setFont("Helvetica", 12)
                 
-                # معالجة النص العربي
                 try:
                     reshaped_text = arabic_reshaper.reshape(line)
                     bidi_text = get_display(reshaped_text)
@@ -325,23 +316,41 @@ class AIService:
                 y_position -= 20
             
             c.save()
-            logger.info(f"PDF created successfully: {output_path}")
             return True
         except Exception as e:
             logger.error(f"Error creating PDF: {e}")
             return False
 
-# ============= واجهة المستخدم الرئيسية =============
-class MainBot:
+# ============= الفئة الرئيسية للبوت =============
+class YallaNataalamBot:
     def __init__(self):
         self.user_manager = UserManager()
         self.materials_manager = MaterialsManager()
         self.ai_service = AIService()
-        logger.info("MainBot initialized successfully")
+        self.settings = DataManager.load_data(ADMIN_FILE, {
+            "maintenance": False,
+            "prices": SERVICE_PRICES.copy(),
+            "welcome_bonus": WELCOME_BONUS,
+            "referral_bonus": REFERRAL_BONUS,
+            "channel_link": "https://t.me/joinchat/AAAA",
+            "support_link": f"https://t.me/{SUPPORT_USERNAME}"
+        })
+        logger.info("Bot initialized successfully")
     
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """بدء البوت"""
         user = update.effective_user
+        
+        # التحقق من وضع الصيانة
+        if self.settings.get("maintenance", False) and user.id != ADMIN_ID:
+            await update.message.reply_text(
+                "🔧 <b>البوت قيد الصيانة</b>\n\n"
+                "نعمل على تحسين الخدمة. سيعود البوت قريباً.\n"
+                f"📞 للاستفسار: @{SUPPORT_USERNAME}",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        
         user_data = self.user_manager.get_user(user.id)
         
         welcome_message = f"""
@@ -378,6 +387,539 @@ class MainBot:
             parse_mode=ParseMode.HTML
         )
     
+    async def admin_panel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """فتح لوحة التحكم"""
+        query = update.callback_query
+        if query:
+            await query.answer()
+            user = query.from_user
+            message = query
+        else:
+            user = update.effective_user
+            message = update.message
+        
+        if user.id != ADMIN_ID:
+            if query:
+                await query.edit_message_text("⛔ <b>غير مسموح لك بالدخول!</b>", parse_mode=ParseMode.HTML)
+            else:
+                await update.message.reply_text("⛔ <b>غير مسموح لك بالدخول!</b>", parse_mode=ParseMode.HTML)
+            return
+        
+        total_users = len(self.user_manager.users)
+        total_balance = sum(user.get("balance", 0) for user in self.user_manager.users.values())
+        
+        panel_text = f"""
+👑 <b>لوحة التحكم الإدارية</b>
+
+📊 <b>إحصائيات البوت:</b>
+- عدد المستخدمين: {total_users}
+- إجمالي الرصيد: {total_balance:,} دينار
+- حالة البوت: {"🟢 نشط" if not self.settings['maintenance'] else "🔴 صيانة"}
+
+⚙️ <b>اختر الإجراء:</b>
+"""
+        
+        keyboard = [
+            [InlineKeyboardButton("👥 إدارة المستخدمين", callback_data="admin_users")],
+            [InlineKeyboardButton("💰 شحن الرصيد", callback_data="admin_charge")],
+            [InlineKeyboardButton("⚙️ تغيير الأسعار", callback_data="admin_prices")],
+            [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_stats")],
+            [InlineKeyboardButton("🛠️ إعدادات البوت", callback_data="admin_settings")],
+            [InlineKeyboardButton("📚 إدارة المواد", callback_data="admin_materials")],
+            [InlineKeyboardButton("🔙 رجوع للبوت", callback_data="back_home")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if query:
+            await query.edit_message_text(panel_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text(panel_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    
+    async def handle_admin_users(self, query):
+        """عرض إدارة المستخدمين"""
+        users_count = len(self.user_manager.users)
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 بحث عن مستخدم", callback_data="admin_user_search")],
+            [InlineKeyboardButton("📋 قائمة المستخدمين (الصفحة 1)", callback_data="admin_user_list_1")],
+            [InlineKeyboardButton("💰 أفضل 10 مستخدمين", callback_data="admin_top_users")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+        ]
+        
+        await query.edit_message_text(
+            f"👥 <b>إدارة المستخدمين</b>\n\n"
+            f"📊 عدد المستخدمين: {users_count}\n\n"
+            f"اختر الإجراء:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    
+    async def handle_admin_charge(self, query):
+        """عرض قائمة الشحن"""
+        keyboard = [
+            [InlineKeyboardButton("💰 شحن مستخدم", callback_data="admin_charge_user")],
+            [InlineKeyboardButton("💸 خصم من مستخدم", callback_data="admin_deduct_user")],
+            [InlineKeyboardButton("🎁 شحن جماعي", callback_data="admin_bulk_charge")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+        ]
+        
+        await query.edit_message_text(
+            "💰 <b>إدارة الشحن والرصيد</b>\n\n"
+            "اختر نوع المعاملة:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    
+    async def handle_admin_charge_user(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """بدء عملية شحن مستخدم"""
+        await query.edit_message_text(
+            "💰 <b>شحن مستخدم</b>\n\n"
+            "أرسل ID المستخدم:\n"
+            "<code>123456789</code>",
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data['admin_action'] = 'charge_user'
+        return CHARGE_USER
+    
+    async def handle_admin_deduct_user(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """بدء عملية خصم من مستخدم"""
+        await query.edit_message_text(
+            "💸 <b>خصم من مستخدم</b>\n\n"
+            "أرسل ID المستخدم:\n"
+            "<code>123456789</code>",
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data['admin_action'] = 'deduct_user'
+        return CHARGE_USER
+    
+    async def handle_charge_user_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال ID المستخدم للشحن/الخصم"""
+        user_id = update.effective_user.id
+        if user_id != ADMIN_ID:
+            return ConversationHandler.END
+        
+        text = update.message.text.strip()
+        
+        if not text.isdigit():
+            await update.message.reply_text("❌ <b>أدخل ID صحيح</b>", parse_mode=ParseMode.HTML)
+            return CHARGE_USER
+        
+        target_id = int(text)
+        context.user_data['charge_target'] = target_id
+        
+        action = context.user_data.get('admin_action', '')
+        
+        if action == 'charge_user':
+            await update.message.reply_text(
+                f"✅ <b>تم تحديد المستخدم:</b> {target_id}\n\n"
+                f"💰 <b>أرسل المبلغ للشحن:</b>\n"
+                f"<code>5000</code>",
+                parse_mode=ParseMode.HTML
+            )
+        elif action == 'deduct_user':
+            await update.message.reply_text(
+                f"✅ <b>تم تحديد المستخدم:</b> {target_id}\n\n"
+                f"💸 <b>أرسل المبلغ للخصم:</b>\n"
+                f"<code>1000</code>",
+                parse_mode=ParseMode.HTML
+            )
+        
+        return CHARGE_AMOUNT
+    
+    async def handle_charge_amount(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال المبلغ للشحن/الخصم"""
+        user_id = update.effective_user.id
+        if user_id != ADMIN_ID:
+            return ConversationHandler.END
+        
+        text = update.message.text.strip()
+        
+        if not text.isdigit():
+            await update.message.reply_text("❌ <b>أدخل مبلغاً صحيحاً</b>", parse_mode=ParseMode.HTML)
+            return CHARGE_AMOUNT
+        
+        amount = int(text)
+        target_id = context.user_data.get('charge_target')
+        action = context.user_data.get('admin_action', '')
+        
+        if action == 'charge_user':
+            if self.user_manager.update_balance(target_id, amount, "شحن من المدير"):
+                user_data = self.user_manager.get_user(target_id)
+                new_balance = user_data.get("balance", 0)
+                
+                await update.message.reply_text(
+                    f"✅ <b>تم الشحن بنجاح!</b>\n\n"
+                    f"👤 <b>المستخدم:</b> {target_id}\n"
+                    f"💰 <b>المبلغ:</b> {amount:,} دينار\n"
+                    f"💳 <b>الرصيد الجديد:</b> {new_balance:,} دينار",
+                    parse_mode=ParseMode.HTML
+                )
+                
+                # إرسال إشعار للمستخدم
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_id,
+                        text=f"🎉 <b>تم شحن رصيدك!</b>\n\n"
+                             f"💰 <b>المبلغ:</b> {amount:,} دينار\n"
+                             f"💳 <b>رصيدك الحالي:</b> {new_balance:,} دينار",
+                        parse_mode=ParseMode.HTML
+                    )
+                except:
+                    pass
+            else:
+                await update.message.reply_text("❌ <b>فشل في الشحن. تحقق من ID المستخدم</b>", parse_mode=ParseMode.HTML)
+        
+        elif action == 'deduct_user':
+            if self.user_manager.update_balance(target_id, -amount, "خصم من المدير"):
+                user_data = self.user_manager.get_user(target_id)
+                new_balance = user_data.get("balance", 0)
+                
+                await update.message.reply_text(
+                    f"✅ <b>تم الخصم بنجاح!</b>\n\n"
+                    f"👤 <b>المستخدم:</b> {target_id}\n"
+                    f"💸 <b>المبلغ:</b> {amount:,} دينار\n"
+                    f"💳 <b>الرصيد الجديد:</b> {new_balance:,} دينار",
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await update.message.reply_text("❌ <b>فشل في الخصم. تحقق من ID المستخدم والرصيد</b>", parse_mode=ParseMode.HTML)
+        
+        # تنظيف
+        context.user_data.pop('admin_action', None)
+        context.user_data.pop('charge_target', None)
+        
+        # العودة للوحة التحكم
+        await self.admin_panel(update, context)
+        return ConversationHandler.END
+    
+    async def handle_admin_prices(self, query):
+        """عرض قائمة الأسعار"""
+        prices_text = "<b>💰 الأسعار الحالية:</b>\n\n"
+        
+        service_names = {
+            "exemption": "حساب درجة الإعفاء",
+            "summarize": "تلخيص الملازم",
+            "qa": "سؤال وجواب",
+            "materials": "ملازمي ومرشحاتي"
+        }
+        
+        for service, price in self.settings["prices"].items():
+            prices_text += f"{service_names.get(service, service)}: {price:,} دينار\n"
+        
+        keyboard = []
+        for service in self.settings["prices"]:
+            service_name = service_names.get(service, service)
+            keyboard.append([InlineKeyboardButton(
+                f"✏️ تعديل {service_name}", callback_data=f"admin_price_{service}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")])
+        
+        await query.edit_message_text(
+            prices_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    
+    async def handle_admin_price_change(self, query, context: ContextTypes.DEFAULT_TYPE, service: str):
+        """بدء تغيير السعر"""
+        service_names = {
+            "exemption": "حساب درجة الإعفاء",
+            "summarize": "تلخيص الملازم",
+            "qa": "سؤال وجواب",
+            "materials": "ملازمي ومرشحاتي"
+        }
+        
+        service_name = service_names.get(service, service)
+        current_price = self.settings["prices"].get(service, 1000)
+        
+        await query.edit_message_text(
+            f"💰 <b>تغيير سعر {service_name}</b>\n\n"
+            f"السعر الحالي: {current_price:,} دينار\n\n"
+            f"أرسل السعر الجديد:\n"
+            f"<code>1500</code>",
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data['price_service'] = service
+        return PRICE_CHANGE
+    
+    async def handle_price_change(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال السعر الجديد"""
+        user_id = update.effective_user.id
+        if user_id != ADMIN_ID:
+            return ConversationHandler.END
+        
+        text = update.message.text.strip()
+        
+        if not text.isdigit():
+            await update.message.reply_text("❌ <b>أدخل سعراً صحيحاً</b>", parse_mode=ParseMode.HTML)
+            return PRICE_CHANGE
+        
+        new_price = int(text)
+        service = context.user_data.get('price_service', '')
+        
+        if service:
+            self.settings["prices"][service] = new_price
+            DataManager.save_data(ADMIN_FILE, self.settings)
+            
+            service_names = {
+                "exemption": "حساب درجة الإعفاء",
+                "summarize": "تلخيص الملازم",
+                "qa": "سؤال وجواب",
+                "materials": "ملازمي ومرشحاتي"
+            }
+            
+            await update.message.reply_text(
+                f"✅ <b>تم تغيير السعر بنجاح!</b>\n\n"
+                f"📝 <b>الخدمة:</b> {service_names.get(service, service)}\n"
+                f"💰 <b>السعر الجديد:</b> {new_price:,} دينار",
+                parse_mode=ParseMode.HTML
+            )
+            
+            # تحديث الأسعار العالمية
+            SERVICE_PRICES[service] = new_price
+        
+        context.user_data.pop('price_service', None)
+        await self.admin_panel(update, context)
+        return ConversationHandler.END
+    
+    async def handle_admin_stats(self, query):
+        """عرض الإحصائيات"""
+        users = self.user_manager.users
+        
+        total_users = len(users)
+        active_users = sum(1 for user in users.values() if user.get("balance", 0) > 0)
+        total_balance = sum(user.get("balance", 0) for user in users.values())
+        
+        services_count = {
+            "exemption": 0,
+            "summarize": 0,
+            "qa": 0,
+            "materials": 0
+        }
+        
+        for user in users.values():
+            for service in user.get("used_services", []):
+                service_type = service.get("service", "")
+                if service_type in services_count:
+                    services_count[service_type] += 1
+        
+        stats_text = f"""
+📊 <b>إحصائيات مفصلة</b>
+
+👥 <b>المستخدمين:</b>
+- الإجمالي: {total_users:,}
+- النشطين: {active_users:,}
+- النسبة: {(active_users/total_users*100) if total_users > 0 else 0:.1f}%
+
+💰 <b>الماليات:</b>
+- إجمالي الرصيد: {total_balance:,} دينار
+- متوسط الرصيد: {(total_balance/total_users) if total_users > 0 else 0:,.0f} دينار
+
+📈 <b>الخدمات المستخدمة:</b>
+- حساب الإعفاء: {services_count['exemption']:,}
+- تلخيص الملازم: {services_count['summarize']:,}
+- سؤال وجواب: {services_count['qa']:,}
+- المواد: {services_count['materials']:,}
+- الإجمالي: {sum(services_count.values()):,}
+
+🕐 <b>آخر تحديث:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 تحديث", callback_data="admin_stats")],
+            [InlineKeyboardButton("📥 تصدير البيانات", callback_data="admin_export")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+        ]
+        
+        await query.edit_message_text(
+            stats_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    
+    async def handle_admin_settings(self, query):
+        """عرض إعدادات البوت"""
+        maintenance_status = "🔴 مفعل" if self.settings['maintenance'] else "🟢 معطل"
+        
+        settings_text = f"""
+⚙️ <b>إعدادات البوت</b>
+
+🔧 <b>وضع الصيانة:</b> {maintenance_status}
+🎁 <b>الهدية الترحيبية:</b> {self.settings['welcome_bonus']:,} دينار
+👥 <b>مكافأة الدعوة:</b> {self.settings['referral_bonus']:,} دينار
+
+🔗 <b>الروابط:</b>
+- القناة: {self.settings['channel_link'][:30]}...
+- الدعم: {self.settings['support_link']}
+"""
+        
+        keyboard = [
+            [InlineKeyboardButton("🔧 وضع الصيانة", callback_data="admin_toggle_maintenance")],
+            [InlineKeyboardButton("🎁 الهدية الترحيبية", callback_data="admin_change_welcome")],
+            [InlineKeyboardButton("👥 مكافأة الدعوة", callback_data="admin_change_referral")],
+            [InlineKeyboardButton("📢 رابط القناة", callback_data="admin_change_channel")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+        ]
+        
+        await query.edit_message_text(
+            settings_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    
+    async def handle_admin_materials(self, query):
+        """عرض إدارة المواد"""
+        materials = self.materials_manager.materials
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ إضافة مادة", callback_data="admin_material_add")],
+            [InlineKeyboardButton("📋 عرض المواد", callback_data="admin_material_list_1")],
+            [InlineKeyboardButton("🗑️ حذف مادة", callback_data="admin_material_delete")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+        ]
+        
+        await query.edit_message_text(
+            f"📚 <b>إدارة المواد التعليمية</b>\n\n"
+            f"📊 عدد المواد: {len(materials)}\n\n"
+            f"اختر الإجراء:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    
+    async def handle_admin_material_add(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """بدء إضافة مادة"""
+        await query.edit_message_text(
+            "➕ <b>إضافة مادة جديدة</b>\n\n"
+            "أرسل تفاصيل المادة بالشكل التالي:\n\n"
+            "<code>اسم المادة | الوصف | المرحلة | رابط التحميل</code>\n\n"
+            "مثال:\n"
+            "<code>رياضيات السادس | ملزمة شاملة | السادس الإعدادي | https://example.com/file.pdf</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return MATERIAL_ADD
+    
+    async def handle_material_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """استقبال تفاصيل المادة"""
+        user_id = update.effective_user.id
+        if user_id != ADMIN_ID:
+            return ConversationHandler.END
+        
+        text = update.message.text.strip()
+        parts = text.split('|')
+        
+        if len(parts) >= 4:
+            name = parts[0].strip()
+            description = parts[1].strip()
+            stage = parts[2].strip()
+            url = parts[3].strip()
+            
+            new_material = {
+                "id": len(self.materials_manager.materials) + 1,
+                "name": name,
+                "description": description,
+                "stage": stage,
+                "file_url": url,
+                "added_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            self.materials_manager.add_material(new_material)
+            
+            await update.message.reply_text(
+                f"✅ <b>تم إضافة المادة بنجاح!</b>\n\n"
+                f"📚 <b>الاسم:</b> {name}\n"
+                f"📝 <b>الوصف:</b> {description}\n"
+                f"🎓 <b>المرحلة:</b> {stage}\n"
+                f"🔗 <b>الرابط:</b> {url[:50]}...",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text("❌ <b>تنسيق غير صحيح. استخدم | لفصل الحقول</b>", parse_mode=ParseMode.HTML)
+            return MATERIAL_ADD
+        
+        await self.admin_panel(update, context)
+        return ConversationHandler.END
+    
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """معالجة جميع عمليات الرد"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            if query.data == "admin_panel":
+                await self.admin_panel(update, context)
+            
+            elif query.data == "admin_users":
+                await self.handle_admin_users(query)
+            
+            elif query.data == "admin_charge":
+                await self.handle_admin_charge(query)
+            
+            elif query.data == "admin_charge_user":
+                await self.handle_admin_charge_user(query, context)
+                return CHARGE_USER
+            
+            elif query.data == "admin_deduct_user":
+                await self.handle_admin_deduct_user(query, context)
+                return CHARGE_USER
+            
+            elif query.data == "admin_prices":
+                await self.handle_admin_prices(query)
+            
+            elif query.data.startswith("admin_price_"):
+                service = query.data.replace("admin_price_", "")
+                await self.handle_admin_price_change(query, context, service)
+                return PRICE_CHANGE
+            
+            elif query.data == "admin_stats":
+                await self.handle_admin_stats(query)
+            
+            elif query.data == "admin_settings":
+                await self.handle_admin_settings(query)
+            
+            elif query.data == "admin_toggle_maintenance":
+                self.settings['maintenance'] = not self.settings['maintenance']
+                DataManager.save_data(ADMIN_FILE, self.settings)
+                status = "تم تفعيل" if self.settings['maintenance'] else "تم إلغاء"
+                await query.answer(f"✅ {status} وضع الصيانة")
+                await self.handle_admin_settings(query)
+            
+            elif query.data == "admin_materials":
+                await self.handle_admin_materials(query)
+            
+            elif query.data == "admin_material_add":
+                await self.handle_admin_material_add(query, context)
+                return MATERIAL_ADD
+            
+            elif query.data == "back_home":
+                await self.handle_back_home(update, context)
+            
+            # باقي الأزرار للخدمات العادية
+            elif query.data.startswith("service_"):
+                await self.handle_service_selection(update, context)
+            
+            elif query.data == "balance":
+                await self.handle_balance_check(update, context)
+            
+            elif query.data == "stats":
+                await self.handle_stats(update, context)
+            
+            elif query.data == "invite":
+                await self.handle_invite(update, context)
+            
+            elif query.data.startswith("stage_"):
+                stage = query.data.replace("stage_", "")
+                await self.show_stage_materials(query, stage)
+            
+            else:
+                await query.answer("⏳ جاري التحميل...")
+        
+        except Exception as e:
+            logger.error(f"Error in callback handler: {e}")
+            await query.answer("❌ حدث خطأ. حاول مرة أخرى")
+    
+    # باقي الدوال للخدمات العادية (نفس الدوال السابقة)
     async def handle_service_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """معالجة اختيار الخدمة"""
         query = update.callback_query
@@ -423,7 +965,6 @@ class MainBot:
         """عرض آلة حساب الإعفاء"""
         user_id = query.from_user.id
         
-        # التحقق من الرصيد أولاً
         if not self.user_manager.can_afford(user_id, "exemption"):
             await query.edit_message_text(
                 f"❌ <b>رصيدك غير كافي!</b>\n\n"
@@ -464,11 +1005,9 @@ class MainBot:
         try:
             text = update.message.text.strip()
             
-            # طريقة 1: جميع الدرجات في سطر واحد
             if len(text.split()) >= 3:
                 scores = list(map(float, text.split()[:3]))
                 
-                # التحقق من الرصيد
                 if not self.user_manager.charge_service(user_id, "exemption"):
                     await update.message.reply_text(
                         f"❌ <b>رصيدك غير كافي!</b>\n\n"
@@ -480,7 +1019,6 @@ class MainBot:
                 await self.calculate_and_send_result(update, user_id, scores)
                 return
             
-            # طريقة 2: كل درجة على حدة
             try:
                 score = float(text)
                 if score < 0 or score > 100:
@@ -503,7 +1041,6 @@ class MainBot:
                 elif len(user_data["pending_scores"]) >= 3:
                     scores = user_data["pending_scores"][-3:]
                     
-                    # التحقق من الرصيد
                     if not self.user_manager.charge_service(user_id, "exemption"):
                         await update.message.reply_text(
                             f"❌ <b>رصيدك غير كافي!</b>\n\n"
@@ -563,7 +1100,6 @@ class MainBot:
         
         await update.message.reply_text(message, parse_mode=ParseMode.HTML)
         
-        # حفظ الدرجات
         user_data = self.user_manager.get_user(user_id)
         user_data.setdefault("exemption_scores", []).append({
             "scores": scores,
@@ -580,7 +1116,6 @@ class MainBot:
         if not context.user_data.get('awaiting_pdf'):
             return
         
-        # التحقق من الرصيد
         if not self.user_manager.charge_service(user_id, "summarize"):
             await update.message.reply_text(
                 f"❌ <b>رصيدك غير كافي!</b>\n\n"
@@ -590,7 +1125,6 @@ class MainBot:
             context.user_data['awaiting_pdf'] = False
             return
         
-        # التحقق من أن الملف PDF
         document = update.message.document
         if not document.mime_type == 'application/pdf':
             await update.message.reply_text("❌ يرجى إرسال ملف PDF فقط")
@@ -599,14 +1133,12 @@ class MainBot:
         await update.message.reply_text("⏳ جاري تحميل الملف...")
         
         try:
-            # تحميل الملف
             file = await document.get_file()
             pdf_path = f"temp_{user_id}.pdf"
             await file.download_to_drive(pdf_path)
             
             await update.message.reply_text("📖 جاري قراءة الملف وتلخيصه...")
             
-            # استخراج النص
             text = self.ai_service.extract_text_from_pdf(pdf_path)
             
             if len(text) < 100:
@@ -617,7 +1149,6 @@ class MainBot:
             
             await update.message.reply_text("🤖 جاري التلخيص بالذكاء الاصطناعي...")
             
-            # تلخيص النص
             summary = self.ai_service.summarize_pdf(pdf_path)
             
             if summary.startswith("❌") or summary.startswith("حدث خطأ"):
@@ -628,7 +1159,6 @@ class MainBot:
             
             await update.message.reply_text("📄 جاري إنشاء ملف PDF جديد...")
             
-            # إنشاء PDF جديد
             output_path = f"summary_{user_id}.pdf"
             success = self.ai_service.create_summary_pdf(text[:1000], summary, output_path)
             
@@ -642,7 +1172,6 @@ class MainBot:
                     parse_mode=ParseMode.HTML
                 )
                 
-                # تنظيف الملفات المؤقتة
                 os.remove(pdf_path)
                 os.remove(output_path)
             else:
@@ -674,7 +1203,6 @@ class MainBot:
             await update.message.reply_text("❌ السؤال قصير جداً. يرجى كتابة سؤال مفصل")
             return
         
-        # التحقق من الرصيد
         if not self.user_manager.charge_service(user_id, "qa"):
             await update.message.reply_text(
                 f"❌ <b>رصيدك غير كافي!</b>\n\n"
@@ -691,7 +1219,6 @@ class MainBot:
             
             if answer.startswith("❌") or answer.startswith("حدث خطأ"):
                 await update.message.reply_text(f"❌ {answer}")
-                # استرجاع الرصيد في حالة الخطأ
                 self.user_manager.update_balance(user_id, SERVICE_PRICES['qa'], "استرجاع رصيد لخطأ في الخدمة")
             else:
                 await update.message.reply_text(
@@ -705,7 +1232,6 @@ class MainBot:
         except Exception as e:
             logger.error(f"Error answering question: {e}")
             await update.message.reply_text(f"❌ حدث خطأ في الإجابة: {str(e)[:100]}")
-            # استرجاع الرصيد في حالة الخطأ
             self.user_manager.update_balance(user_id, SERVICE_PRICES['qa'], "استرجاع رصيد لخطأ في الخدمة")
         
         context.user_data['awaiting_question'] = False
@@ -714,7 +1240,6 @@ class MainBot:
         """عرض قائمة المواد"""
         user_id = query.from_user.id
         
-        # التحقق من الرصيد أولاً
         if not self.user_manager.can_afford(user_id, "materials"):
             await query.edit_message_text(
                 f"❌ <b>رصيدك غير كافي!</b>\n\n"
@@ -736,7 +1261,6 @@ class MainBot:
             )
             return
         
-        # خصم المبلغ عند الدخول للقسم
         if not self.user_manager.charge_service(user_id, "materials"):
             await query.edit_message_text(
                 f"❌ <b>فشل في خصم المبلغ!</b>",
@@ -762,8 +1286,6 @@ class MainBot:
     
     async def show_stage_materials(self, query, stage: str):
         """عرض مواد مرحلة محددة"""
-        user_id = query.from_user.id
-        
         materials = self.materials_manager.get_materials_by_stage(stage)
         
         if not materials:
@@ -814,7 +1336,7 @@ class MainBot:
         if transactions:
             for trans in transactions:
                 sign = "+" if trans['amount'] > 0 else ""
-                date = trans['date'].split()[0]  # التاريخ فقط
+                date = trans['date'].split()[0]
                 balance_text += f"\n{date}: {sign}{trans['amount']} - {trans['description'][:30]}"
         else:
             balance_text += "\nلا توجد معاملات سابقة"
@@ -937,49 +1459,6 @@ class MainBot:
             parse_mode=ParseMode.HTML
         )
     
-    async def handle_admin_panel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """توجيه إلى لوحة التحكم"""
-        query = update.callback_query
-        await query.answer()
-        
-        user_id = query.from_user.id
-        
-        if user_id != ADMIN_ID:
-            await query.edit_message_text("⛔ <b>غير مسموح لك بالدخول إلى لوحة التحكم!</b>", parse_mode=ParseMode.HTML)
-            return
-        
-        await query.edit_message_text(
-            "👑 <b>سيتم توجيهك إلى لوحة التحكم...</b>\n\n"
-            "📝 <b>اكتب /admin للدخول إلى لوحة التحكم</b>",
-            parse_mode=ParseMode.HTML
-        )
-    
-    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالجة جميع عمليات الرد"""
-        query = update.callback_query
-        
-        try:
-            if query.data.startswith("service_"):
-                await self.handle_service_selection(update, context)
-            elif query.data == "balance":
-                await self.handle_balance_check(update, context)
-            elif query.data == "stats":
-                await self.handle_stats(update, context)
-            elif query.data == "invite":
-                await self.handle_invite(update, context)
-            elif query.data.startswith("stage_"):
-                stage = query.data.replace("stage_", "")
-                await self.show_stage_materials(query, stage)
-            elif query.data == "back_home":
-                await self.handle_back_home(update, context)
-            elif query.data == "admin_panel":
-                await self.handle_admin_panel(update, context)
-            else:
-                await query.answer("⏳ جاري التحميل...")
-        except Exception as e:
-            logger.error(f"Error in callback handler: {e}")
-            await query.answer("❌ حدث خطأ. حاول مرة أخرى")
-    
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """معالجة الرسائل النصية"""
         message_type = update.message.chat.type
@@ -987,7 +1466,6 @@ class MainBot:
         if message_type == "private":
             text = update.message.text
             
-            # تجاهل الرسائل القصيرة جداً
             if not text or len(text.strip()) < 1:
                 return
             
@@ -1019,6 +1497,16 @@ class MainBot:
             except:
                 pass
     
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إلغاء العملية"""
+        user_id = update.effective_user.id
+        if user_id != ADMIN_ID:
+            return ConversationHandler.END
+        
+        await update.message.reply_text("❌ <b>تم إلغاء العملية</b>", parse_mode=ParseMode.HTML)
+        await self.admin_panel(update, context)
+        return ConversationHandler.END
+    
     def run(self):
         """تشغيل البوت"""
         print("🤖 البوت يعمل الآن...")
@@ -1027,9 +1515,43 @@ class MainBot:
         
         app = Application.builder().token(TOKEN).build()
         
+        # إنشاء ConversationHandler للوحة التحكم
+        admin_conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.handle_callback)],
+            states={
+                CHARGE_USER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_charge_user_id),
+                    CallbackQueryHandler(self.handle_callback)
+                ],
+                CHARGE_AMOUNT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_charge_amount),
+                    CallbackQueryHandler(self.handle_callback)
+                ],
+                PRICE_CHANGE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_price_change),
+                    CallbackQueryHandler(self.handle_callback)
+                ],
+                MATERIAL_ADD: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_material_add),
+                    CallbackQueryHandler(self.handle_callback)
+                ],
+                ADMIN_MENU: [
+                    CallbackQueryHandler(self.handle_callback)
+                ]
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.cancel),
+                CallbackQueryHandler(self.handle_callback, pattern="^back_home$|^admin_panel$")
+            ],
+            map_to_parent={
+                ConversationHandler.END: ADMIN_MENU
+            }
+        )
+        
         # إضافة handlers
         app.add_handler(CommandHandler("start", self.start))
-        app.add_handler(CallbackQueryHandler(self.handle_callback))
+        app.add_handler(CommandHandler("admin", self.admin_panel))
+        app.add_handler(admin_conv_handler)
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         app.add_handler(MessageHandler(filters.Document.PDF, self.handle_pdf_file))
         app.add_error_handler(self.error_handler)
@@ -1038,5 +1560,5 @@ class MainBot:
 
 # ============= تشغيل البوت =============
 if __name__ == "__main__":
-    bot = MainBot()
+    bot = YallaNataalamBot()
     bot.run()
