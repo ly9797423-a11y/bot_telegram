@@ -7,3 +7,6 @@ python-bidi==0.4.2
 requests==2.31.0
 python-dotenv==1.0.0
 Pillow==10.1.0
+pymupdf==1.23.8  # بديل أفضل لـ PyPDF2
+httpx==0.25.1    # للطلبات غير المتزامنة
+aiofiles==23.2.1 # لقراءة الملفات بشكل غير متزامن
