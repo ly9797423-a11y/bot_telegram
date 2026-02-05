@@ -1,9 +1,11 @@
 python-telegram-bot==20.7
 google-generativeai==0.3.2
-pymupdf==1.23.26
-Pillow==10.2.0
-reportlab==4.0.9
+pymongo==4.6.1
+pillow==10.2.0
+reportlab==4.1.0
 arabic-reshaper==3.0.0
 python-bidi==0.4.2
-emoji==2.10.0
+PyPDF2==3.0.1
+fpdf2==2.7.8
 requests==2.31.0
+pytz==2023.3
