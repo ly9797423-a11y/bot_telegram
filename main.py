@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-بوت تليجرام: يلا نتعلم - الإصدار النهائي الكامل
+بوت تليجرام: يلا نتعلم - الإصدار النهائي الكامل (مصحح)
 مطور البوت: @Allawi04
 ايدي المطور: 6130994941
 توكن البوت: 8279341291:AAGet-xHKrmSg1RuBYaaNuzmaqv1LgwUM6E
@@ -64,10 +64,14 @@ except ImportError:
     PIL_SUPPORT = False
 
 try:
-    import PyPDF2
+    import pypdf as PyPDF2
     PYPDF2_SUPPORT = True
 except ImportError:
-    PYPDF2_SUPPORT = False
+    try:
+        import PyPDF2
+        PYPDF2_SUPPORT = True
+    except ImportError:
+        PYPDF2_SUPPORT = False
 
 import io
 import textwrap
@@ -82,7 +86,7 @@ CHANNEL_USERNAME = "@FCJCV"
 
 # إعدادات API الذكاء الاصطناعي
 GEMINI_API_KEY = "AIzaSyARsl_YMXA74bPQpJduu0jJVuaku7MaHuY"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 # إعدادات الأسعار الافتراضية
 DEFAULT_PRICES = {
@@ -106,6 +110,9 @@ ADMIN_CHANGE_PRICE = 14
 ADMIN_BROADCAST = 15
 ADMIN_ADD_MATERIAL_TITLE, ADMIN_ADD_MATERIAL_DESC, ADMIN_ADD_MATERIAL_STAGE, ADMIN_ADD_MATERIAL_FILE = range(16, 20)
 ADMIN_UPDATE_INVITE_REWARD = 20
+ADMIN_UPDATE_SERVICE_PRICE = 21
+ADMIN_VIEW_QUESTIONS = 22
+ADMIN_ANSWER_QUESTION = 23
 
 # إعدادات التسجيل
 logging.basicConfig(
@@ -121,7 +128,7 @@ logger = logging.getLogger(__name__)
 # ====================== قاعدة البيانات المحسنة ======================
 class Database:
     def __init__(self):
-        self.conn = sqlite3.connect('yalla_nt3lm.db', check_same_thread=False)
+        self.conn = sqlite3.connect('yalla_nt3lm.db', check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.create_tables()
         self.init_default_data()
@@ -364,13 +371,12 @@ class Database:
         
         # إضافة المشرف الرئيسي
         cursor.execute('''
-        INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, balance, is_admin)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ''', (ADMIN_ID, 'Allawi04', 'المشرف', 'الرئيسي', 0, 1))
+        INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, balance, is_admin, is_vip)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (ADMIN_ID, 'Allawi04', 'المشرف', 'الرئيسي', 0, 1, 1))
         
         self.conn.commit()
     
-    # =============== دوال المستخدمين المحسنة ===============
     def add_user(self, user_id, username, first_name, last_name, invited_by=0):
         """إضافة مستخدم جديد مع جميع التحققيات"""
         cursor = self.conn.cursor()
@@ -430,7 +436,10 @@ class Database:
     def get_user(self, user_id):
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-        return cursor.fetchone()
+        user = cursor.fetchone()
+        if user:
+            return dict(user)
+        return None
     
     def update_user_activity(self, user_id):
         cursor = self.conn.cursor()
@@ -450,11 +459,13 @@ class Database:
     
     def deduct_balance(self, user_id, amount):
         cursor = self.conn.cursor()
-        cursor.execute('UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?', 
-                      (amount, user_id, amount))
-        success = cursor.rowcount > 0
-        self.conn.commit()
-        return success
+        cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        if result and result['balance'] >= amount:
+            cursor.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (amount, user_id))
+            self.conn.commit()
+            return True
+        return False
     
     def get_user_count(self):
         cursor = self.conn.cursor()
@@ -470,7 +481,8 @@ class Database:
     def get_all_users(self, limit=50, offset=0):
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM users ORDER BY user_id DESC LIMIT ? OFFSET ?', (limit, offset))
-        return cursor.fetchall()
+        users = cursor.fetchall()
+        return [dict(user) for user in users]
     
     def search_users(self, search_term):
         cursor = self.conn.cursor()
@@ -479,7 +491,8 @@ class Database:
         WHERE user_id LIKE ? OR username LIKE ? OR first_name LIKE ? OR last_name LIKE ?
         ORDER BY user_id DESC LIMIT 20
         ''', (f'%{search_term}%', f'%{search_term}%', f'%{search_term}%', f'%{search_term}%'))
-        return cursor.fetchall()
+        users = cursor.fetchall()
+        return [dict(user) for user in users]
     
     def ban_user(self, user_id):
         cursor = self.conn.cursor()
@@ -505,7 +518,6 @@ class Database:
         self.conn.commit()
         return cursor.rowcount > 0
     
-    # =============== دوال العمليات المالية المحسنة ===============
     def add_transaction(self, user_id, amount, type_, service, description="", admin_id=0):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -523,7 +535,8 @@ class Database:
         ORDER BY created_at DESC 
         LIMIT ?
         ''', (user_id, limit))
-        return cursor.fetchall()
+        transactions = cursor.fetchall()
+        return [dict(t) for t in transactions]
     
     def get_all_transactions(self, limit=50, offset=0):
         cursor = self.conn.cursor()
@@ -534,12 +547,12 @@ class Database:
         ORDER BY t.created_at DESC 
         LIMIT ? OFFSET ?
         ''', (limit, offset))
-        return cursor.fetchall()
+        transactions = cursor.fetchall()
+        return [dict(t) for t in transactions]
     
     def get_financial_stats(self):
         cursor = self.conn.cursor()
         
-        # إحصائيات مالية شاملة
         cursor.execute('''
         SELECT 
             SUM(CASE WHEN type = 'charge' THEN amount ELSE 0 END) as total_charged,
@@ -552,7 +565,6 @@ class Database:
         
         stats = cursor.fetchone()
         
-        # إحصائيات الخدمات
         cursor.execute('''
         SELECT 
             service,
@@ -566,7 +578,6 @@ class Database:
         
         service_stats = cursor.fetchall()
         
-        # إحصائيات اليوم
         cursor.execute('''
         SELECT 
             COUNT(*) as today_transactions,
@@ -583,21 +594,23 @@ class Database:
             'today': dict(today_stats) if today_stats else {}
         }
     
-    # =============== دوال إدارة الخدمات ===============
     def get_service(self, service_name):
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM bot_services WHERE service_name = ?', (service_name,))
-        return cursor.fetchone()
+        service = cursor.fetchone()
+        return dict(service) if service else None
     
     def get_all_services(self):
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM bot_services ORDER BY service_id')
-        return cursor.fetchall()
+        services = cursor.fetchall()
+        return [dict(s) for s in services]
     
     def get_active_services(self):
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM bot_services WHERE is_active = 1 ORDER BY service_id')
-        return cursor.fetchall()
+        services = cursor.fetchall()
+        return [dict(s) for s in services]
     
     def toggle_service(self, service_name, is_active):
         cursor = self.conn.cursor()
@@ -625,38 +638,22 @@ class Database:
             return service['is_active'] == 1
         return True
     
-    # =============== دوال VIP المحسنة ===============
     def add_vip_subscriber(self, user_id, duration_days=30):
         cursor = self.conn.cursor()
-        
-        # التحقق من وجود اشتراك سابق
-        cursor.execute('SELECT * FROM vip_subscribers WHERE user_id = ?', (user_id,))
-        existing = cursor.fetchone()
         
         subscription_date = datetime.datetime.now()
         expiry_date = subscription_date + datetime.timedelta(days=duration_days)
         
-        if existing:
-            # تجديد الاشتراك
-            cursor.execute('''
-            UPDATE vip_subscribers 
-            SET subscription_date = ?, expiry_date = ?, is_active = 1 
-            WHERE user_id = ?
-            ''', (subscription_date, expiry_date, user_id))
-        else:
-            # اشتراك جديد
-            cursor.execute('''
-            INSERT INTO vip_subscribers (user_id, subscription_date, expiry_date, is_active)
-            VALUES (?, ?, ?, 1)
-            ''', (user_id, subscription_date, expiry_date))
+        cursor.execute('''
+        INSERT OR REPLACE INTO vip_subscribers (user_id, subscription_date, expiry_date, is_active)
+        VALUES (?, ?, ?, 1)
+        ''', (user_id, subscription_date, expiry_date))
         
-        # تحديث جدول المستخدمين
         cursor.execute('UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?', 
                       (expiry_date, user_id))
         
         self.conn.commit()
         
-        # تحديث الإحصائيات
         self.update_daily_stats('vip_subscriptions', 1)
         
         return True
@@ -672,7 +669,8 @@ class Database:
     def get_vip_subscriber(self, user_id):
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM vip_subscribers WHERE user_id = ?', (user_id,))
-        return cursor.fetchone()
+        vip = cursor.fetchone()
+        return dict(vip) if vip else None
     
     def get_all_vip_subscribers(self, active_only=True):
         cursor = self.conn.cursor()
@@ -693,7 +691,8 @@ class Database:
             ORDER BY vs.expiry_date DESC
             ''')
         
-        return cursor.fetchall()
+        subscribers = cursor.fetchall()
+        return [dict(s) for s in subscribers]
     
     def cancel_vip_subscription(self, user_id):
         cursor = self.conn.cursor()
@@ -727,18 +726,18 @@ class Database:
         AND vs.expiry_date BETWEEN CURRENT_TIMESTAMP AND datetime(CURRENT_TIMESTAMP, ?)
         ORDER BY vs.expiry_date ASC
         ''', (f'+{days} days',))
-        return cursor.fetchall()
+        subscribers = cursor.fetchall()
+        return [dict(s) for s in subscribers]
     
-    # =============== دوال أرباح المدرسين ===============
     def get_vip_earnings(self, teacher_id):
         cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM vip_earnings WHERE teacher_id = ?', (teacher_id,))
-        return cursor.fetchone()
+        earnings = cursor.fetchone()
+        return dict(earnings) if earnings else None
     
     def update_vip_earnings(self, teacher_id, amount):
         cursor = self.conn.cursor()
         
-        # التحقق من وجود سجل
         cursor.execute('SELECT * FROM vip_earnings WHERE teacher_id = ?', (teacher_id,))
         existing = cursor.fetchone()
         
@@ -780,9 +779,9 @@ class Database:
         JOIN users u ON ve.teacher_id = u.user_id
         ORDER BY ve.available_balance DESC
         ''')
-        return cursor.fetchall()
+        earnings = cursor.fetchall()
+        return [dict(e) for e in earnings]
     
-    # =============== دوال الإعدادات ===============
     def get_setting(self, key):
         cursor = self.conn.cursor()
         cursor.execute('SELECT setting_value FROM bot_settings WHERE setting_key = ?', (key,))
@@ -819,12 +818,10 @@ class Database:
     def set_vip_subscription_price(self, price):
         return self.update_setting('vip_subscription_price', str(price))
     
-    # =============== دوال الإحصائيات ===============
     def update_daily_stats(self, stat_type, value=1, increment=False):
         cursor = self.conn.cursor()
         today = datetime.datetime.now().strftime('%Y-%m-%d')
         
-        # التحقق من وجود سجل اليوم
         cursor.execute('SELECT * FROM bot_stats WHERE stat_date = ?', (today,))
         existing = cursor.fetchone()
         
@@ -853,12 +850,12 @@ class Database:
         else:
             cursor.execute('SELECT * FROM bot_stats ORDER BY stat_date DESC LIMIT 7')
         
-        return cursor.fetchall()
+        stats = cursor.fetchall()
+        return [dict(s) for s in stats]
     
     def get_overall_stats(self):
         cursor = self.conn.cursor()
         
-        # إحصائيات المستخدمين
         cursor.execute('''
         SELECT 
             COUNT(*) as total_users,
@@ -869,7 +866,6 @@ class Database:
         ''')
         user_stats = cursor.fetchone()
         
-        # إحصائيات اليوم
         cursor.execute('''
         SELECT 
             COUNT(*) as today_users,
@@ -879,11 +875,9 @@ class Database:
         ''')
         today_stats = cursor.fetchone()
         
-        # إحصائيات VIP
         cursor.execute('SELECT COUNT(*) as active_vip FROM vip_subscribers WHERE is_active = 1')
         vip_stats = cursor.fetchone()
         
-        # إحصائيات المبيعات
         cursor.execute('''
         SELECT 
             COUNT(*) as total_sales,
@@ -901,7 +895,6 @@ class Database:
             'sales': dict(sales_stats) if sales_stats else {}
         }
     
-    # =============== دوال المواد التعليمية ===============
     def add_study_material(self, title, description, stage, file_id, file_type, added_by):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -933,7 +926,8 @@ class Database:
             else:
                 cursor.execute('SELECT * FROM study_materials ORDER BY added_at DESC')
         
-        return cursor.fetchall()
+        materials = cursor.fetchall()
+        return [dict(m) for m in materials]
     
     def toggle_study_material(self, material_id, is_active):
         cursor = self.conn.cursor()
@@ -948,7 +942,6 @@ class Database:
         self.conn.commit()
         return cursor.rowcount > 0
     
-    # =============== دوال الأسئلة ===============
     def add_student_question(self, user_id, question_text, question_image, price_paid):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -967,7 +960,8 @@ class Database:
         WHERE sq.is_approved = 0 AND sq.is_answered = 0
         ORDER BY sq.created_at DESC
         ''')
-        return cursor.fetchall()
+        questions = cursor.fetchall()
+        return [dict(q) for q in questions]
     
     def get_approved_questions(self):
         cursor = self.conn.cursor()
@@ -978,7 +972,30 @@ class Database:
         WHERE sq.is_approved = 1 AND sq.is_answered = 0
         ORDER BY sq.created_at DESC
         ''')
-        return cursor.fetchall()
+        questions = cursor.fetchall()
+        return [dict(q) for q in questions]
+    
+    def get_all_questions(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+        SELECT sq.*, u.username, u.first_name 
+        FROM student_questions sq
+        JOIN users u ON sq.user_id = u.user_id
+        ORDER BY sq.created_at DESC
+        ''')
+        questions = cursor.fetchall()
+        return [dict(q) for q in questions]
+    
+    def get_question_by_id(self, question_id):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+        SELECT sq.*, u.username, u.first_name 
+        FROM student_questions sq
+        JOIN users u ON sq.user_id = u.user_id
+        WHERE sq.question_id = ?
+        ''', (question_id,))
+        question = cursor.fetchone()
+        return dict(question) if question else None
     
     def approve_question(self, question_id, admin_id):
         cursor = self.conn.cursor()
@@ -1006,7 +1023,6 @@ class Database:
         self.conn.commit()
         return cursor.rowcount > 0
     
-    # =============== دوال درجات الإعفاء ===============
     def save_exemption_grade(self, user_id, grade1, grade2, grade3):
         cursor = self.conn.cursor()
         average = (grade1 + grade2 + grade3) / 3
@@ -1026,9 +1042,9 @@ class Database:
         WHERE user_id = ? 
         ORDER BY created_at DESC
         ''', (user_id,))
-        return cursor.fetchall()
+        exemptions = cursor.fetchall()
+        return [dict(e) for e in exemptions]
     
-    # =============== دوال محاضرات VIP ===============
     def add_vip_lecture(self, teacher_id, file_id, title, description, price):
         cursor = self.conn.cursor()
         cursor.execute('''
@@ -1047,20 +1063,21 @@ class Database:
         WHERE vl.status = 'pending'
         ORDER BY vl.created_at DESC
         ''')
-        return cursor.fetchall()
+        lectures = cursor.fetchall()
+        return [dict(l) for l in lectures]
     
     def get_approved_lectures(self, limit=50):
         cursor = self.conn.cursor()
         cursor.execute('''
-        SELECT vl.*, u.username, u.first_name,
-               (vl.rating_total / NULLIF(vl.rating_count, 0)) as avg_rating
+        SELECT vl.*, u.username, u.first_name
         FROM vip_lectures vl
         JOIN users u ON vl.teacher_id = u.user_id
         WHERE vl.status = 'approved'
         ORDER BY vl.created_at DESC
         LIMIT ?
         ''', (limit,))
-        return cursor.fetchall()
+        lectures = cursor.fetchall()
+        return [dict(l) for l in lectures]
     
     def get_teacher_lectures(self, teacher_id):
         cursor = self.conn.cursor()
@@ -1069,7 +1086,8 @@ class Database:
         WHERE teacher_id = ? AND status != 'deleted'
         ORDER BY created_at DESC
         ''', (teacher_id,))
-        return cursor.fetchall()
+        lectures = cursor.fetchall()
+        return [dict(l) for l in lectures]
     
     def get_lecture_by_id(self, lecture_id):
         cursor = self.conn.cursor()
@@ -1079,7 +1097,8 @@ class Database:
         JOIN users u ON vl.teacher_id = u.user_id
         WHERE vl.lecture_id = ?
         ''', (lecture_id,))
-        return cursor.fetchone()
+        lecture = cursor.fetchone()
+        return dict(lecture) if lecture else None
     
     def approve_lecture(self, lecture_id, admin_id):
         cursor = self.conn.cursor()
@@ -1159,19 +1178,45 @@ db = Database()
 
 # ====================== دوال المساعدة العامة ======================
 def is_admin(user_id):
-    return user_id == ADMIN_ID
+    user_data = db.get_user(user_id)
+    return user_data and (user_data['is_admin'] == 1 or user_id == ADMIN_ID)
 
 def format_currency(amount):
     return f"{amount:,} دينار عراقي"
 
 def format_date(dt):
+    if dt is None:
+        return "غير معروف"
+    
     if isinstance(dt, str):
-        dt = datetime.datetime.fromisoformat(dt.replace('Z', '+00:00'))
+        try:
+            if 'T' in dt:
+                dt = datetime.datetime.fromisoformat(dt.replace('Z', '+00:00'))
+            else:
+                try:
+                    dt = datetime.datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
+                except:
+                    dt = datetime.datetime.strptime(dt, '%Y-%m-%d')
+        except:
+            return dt
+    
     return dt.strftime("%Y-%m-%d %H:%M")
 
 def format_time_ago(dt):
+    if dt is None:
+        return "غير معروف"
+    
     if isinstance(dt, str):
-        dt = datetime.datetime.fromisoformat(dt.replace('Z', '+00:00'))
+        try:
+            if 'T' in dt:
+                dt = datetime.datetime.fromisoformat(dt.replace('Z', '+00:00'))
+            else:
+                try:
+                    dt = datetime.datetime.strptime(dt, '%Y-%m-%d %H:%M:%S')
+                except:
+                    dt = datetime.datetime.strptime(dt, '%Y-%m-%d')
+        except:
+            return "منذ فترة"
     
     now = datetime.datetime.now()
     diff = now - dt
@@ -1189,14 +1234,6 @@ def format_time_ago(dt):
     else:
         return "الآن"
 
-def get_user_display(user):
-    if user.username:
-        return f"@{user.username}"
-    elif user.first_name:
-        return user.first_name
-    else:
-        return f"المستخدم #{user.id}"
-
 def generate_invite_link(user_id):
     return f"https://t.me/{BOT_USERNAME.replace('@', '')}?start={user_id}"
 
@@ -1213,8 +1250,7 @@ async def send_admin_notification(context, message):
 # ====================== دوال الذكاء الاصطناعي ======================
 async def generate_gemini_response(prompt):
     headers = {
-        'Content-Type': 'application/json',
-        'X-goog-api-key': GEMINI_API_KEY
+        'Content-Type': 'application/json'
     }
     
     data = {
@@ -1247,7 +1283,7 @@ async def summarize_pdf_with_gemini(pdf_text):
     - استخدم لغة عربية سليمة وواضحة
     
     النص:
-    {pdf_text[:4000]}
+    {pdf_text[:3000]}
     """
     
     return await generate_gemini_response(prompt)
@@ -1306,6 +1342,7 @@ def get_users_management_keyboard():
         [InlineKeyboardButton("🚫 حظر مستخدم", callback_data="admin_ban_user")],
         [InlineKeyboardButton("✅ فك حظر مستخدم", callback_data="admin_unban_user")],
         [InlineKeyboardButton("👑 رفع مشرف", callback_data="admin_promote_user")],
+        [InlineKeyboardButton("❓ إدارة الأسئلة", callback_data="admin_manage_questions")],
         [InlineKeyboardButton("📋 سجل المعاملات", callback_data="admin_transactions_1")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
     ]
@@ -1339,9 +1376,7 @@ def get_services_management_keyboard():
         [InlineKeyboardButton("📚 تلخيص الملازم", callback_data="admin_service_summary")],
         [InlineKeyboardButton("❓ سؤال وجواب", callback_data="admin_service_qna")],
         [InlineKeyboardButton("👨‍🎓 ساعدوني طالب", callback_data="admin_service_help")],
-        [InlineKeyboardButton("📖 ملازمي ومرشحاتي", callback_data="admin_service_materials")],
-        [InlineKeyboardButton("🎬 محاضرات VIP", callback_data="admin_service_vip_lectures")],
-        [InlineKeyboardButton("👨‍🏫 اشتراك VIP", callback_data="admin_service_vip_subscribe")],
+        [InlineKeyboardButton("📖 إدارة الملازم", callback_data="admin_manage_materials")],
         [InlineKeyboardButton("🔄 تفعيل/تعطيل خدمات", callback_data="admin_toggle_services")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
     ]
@@ -1350,7 +1385,6 @@ def get_services_management_keyboard():
 def get_main_menu_keyboard(user_id):
     keyboard = []
     
-    # الحصول على الخدمات المفعلة
     active_services = db.get_active_services()
     
     for service in active_services:
@@ -1369,7 +1403,6 @@ def get_main_menu_keyboard(user_id):
         elif service['service_name'] == 'vip_subscribe':
             keyboard.append([InlineKeyboardButton(service['display_name'], callback_data="vip_subscribe")])
     
-    # أزرار VIP الإضافية
     if db.is_vip_subscriber(user_id):
         vip_buttons = [
             ("💰 رصيد أرباحي", "vip_my_earnings"),
@@ -1379,7 +1412,6 @@ def get_main_menu_keyboard(user_id):
         for text, callback in vip_buttons:
             keyboard.append([InlineKeyboardButton(text, callback_data=callback)])
     
-    # أزرار المساعدة
     help_buttons = [
         [InlineKeyboardButton("💰 رصيدي", callback_data="my_balance"),
          InlineKeyboardButton("👥 دعوة صديق", callback_data="invite_friend")],
@@ -1389,7 +1421,6 @@ def get_main_menu_keyboard(user_id):
     ]
     keyboard.extend(help_buttons)
     
-    # زر لوحة التحكم للمشرف
     if is_admin(user_id):
         keyboard.append([InlineKeyboardButton("🛠️ لوحة التحكم", callback_data="admin_panel")])
     
@@ -1400,12 +1431,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج أمر /start - محسن"""
     user = update.effective_user
     
-    # التحقق من وضع الصيانة
     if db.get_maintenance_mode() and not is_admin(user.id):
         await update.message.reply_text("⚙️ البوت في وضع الصيانة حالياً. يرجى المحاولة لاحقاً.")
         return
     
-    # معالجة رابط الدعوة
     invited_by = 0
     if context.args and len(context.args) > 0:
         try:
@@ -1413,7 +1442,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             invited_by = 0
     
-    # تسجيل/تحديث المستخدم
     invite_code = db.add_user(
         user.id,
         user.username,
@@ -1422,16 +1450,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invited_by
     )
     
-    # تحديث النشاط
     db.update_user_activity(user.id)
     
-    # التحقق من الحظر
     user_data = db.get_user(user.id)
     if user_data and user_data['is_banned']:
         await update.message.reply_text("🚫 حسابك محظور. يرجى التواصل مع الدعم الفني.")
         return
     
-    # رسالة الترحيب
     welcome_msg = db.get_setting('welcome_message') or "مرحباً بك في بوت 'يلا نتعلم'! 🎓"
     support_text = db.get_setting('support_text') or f"للتواصل والدعم الفني: {SUPPORT_USERNAME}"
     channel_text = db.get_setting('channel_text') or f"قناة البوت: {CHANNEL_USERNAME}"
@@ -1540,7 +1565,6 @@ async def service_exemption(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user_data = db.get_user(user_id)
     
-    # التحقق من تفعيل الخدمة
     if not db.is_service_active('exemption_calc'):
         await query.edit_message_text(
             "⏸️ هذه الخدمة معطلة مؤقتاً من قبل الإدارة.",
@@ -1548,7 +1572,6 @@ async def service_exemption(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # التحقق من الرصيد
     service_price = db.get_service_price('exemption_calc')
     if user_data['balance'] < service_price:
         await query.edit_message_text(
@@ -1626,14 +1649,11 @@ async def process_grade3(update: Update, context: ContextTypes.DEFAULT_TYPE):
         grade2 = context.user_data.get('grade2')
         service_price = context.user_data.get('exemption_price')
         
-        # خصم المبلغ
         if db.deduct_balance(user_id, service_price):
             db.add_transaction(user_id, -service_price, 'payment', 'exemption_calc', 'حساب درجة الإعفاء')
             
-            # حساب المعدل والحفظ
             average, is_exempt = db.save_exemption_grade(user_id, grade1, grade2, grade3)
             
-            # إعداد الرسالة
             if is_exempt:
                 result_msg = "🎉 *مبروك! أنت معفي من المادة* 🎉"
                 emoji = "✅"
@@ -1667,7 +1687,6 @@ async def process_grade3(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             
-            # إرسال إشعار للمشرف
             if is_admin(ADMIN_ID) and db.get_setting('admin_notifications') == '1':
                 await send_admin_notification(context, f"""
                 📊 *عملية حساب إعفاء جديدة*
@@ -1680,7 +1699,6 @@ async def process_grade3(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ فشل في عملية الخصم. يرجى المحاولة لاحقاً.")
         
-        # تنظيف البيانات المؤقتة
         context.user_data.pop('grade1', None)
         context.user_data.pop('grade2', None)
         context.user_data.pop('exemption_service', None)
@@ -1699,7 +1717,6 @@ async def service_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user_data = db.get_user(user_id)
     
-    # التحقق من تفعيل الخدمة
     if not db.is_service_active('pdf_summary'):
         await query.edit_message_text(
             "⏸️ هذه الخدمة معطلة مؤقتاً من قبل الإدارة.",
@@ -1707,7 +1724,6 @@ async def service_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # التحقق من دعم PDF
     if not PDF_SUPPORT:
         await query.edit_message_text(
             "❌ هذه الخدمة غير متاحة حالياً.\n\nالمكتبات المطلوبة غير مثبتة.",
@@ -1715,7 +1731,6 @@ async def service_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # التحقق من الرصيد
     service_price = db.get_service_price('pdf_summary')
     if user_data['balance'] < service_price:
         await query.edit_message_text(
@@ -1758,21 +1773,18 @@ async def process_pdf_summary(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ يرجى إرسال ملف PDF فقط. حاول مرة أخرى:")
         return PDF_SUMMARY
     
-    # التحقق من أن الملف PDF
     file_name = update.message.document.file_name or ""
     if not file_name.lower().endswith('.pdf'):
         await update.message.reply_text("❌ الملف يجب أن يكون بصيغة PDF. حاول مرة أخرى:")
         return PDF_SUMMARY
     
     try:
-        # تحميل الملف
         await update.message.reply_text("⏳ جارٍ تحميل الملف...")
         file = await update.message.document.get_file()
         file_bytes = await file.download_as_bytearray()
         
         await update.message.reply_text("✅ تم تحميل الملف. جارٍ استخراج النص...")
         
-        # استخراج النص من PDF
         pdf_text = extract_text_from_pdf(file_bytes)
         
         if not pdf_text or len(pdf_text.strip()) < 50:
@@ -1781,20 +1793,16 @@ async def process_pdf_summary(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         await update.message.reply_text("✅ تم استخراج النص. جارٍ التلخيص باستخدام الذكاء الاصطناعي...")
         
-        # التحقق من الرصيد قبل الخصم
         service_price = context.user_data.get('summary_price', db.get_service_price('pdf_summary'))
         
         if not db.deduct_balance(user_id, service_price):
             await update.message.reply_text("❌ رصيدك غير كافي. يرجى الشحن وحاول مرة أخرى.")
             return ConversationHandler.END
         
-        # خصم المبلغ
         db.add_transaction(user_id, -service_price, 'payment', 'pdf_summary', 'تلخيص PDF')
         
-        # استخدام الذكاء الاصطناعي للتلخيص
         summary = await summarize_pdf_with_gemini(pdf_text)
         
-        # إرسال النتيجة
         result_msg = f"""
         ✅ *تم تلخيص الملف بنجاح*
         
@@ -1806,7 +1814,6 @@ async def process_pdf_summary(update: Update, context: ContextTypes.DEFAULT_TYPE
         {summary[:3000]}...
         """
         
-        # إذا كان الملخص طويلاً، نقسمه
         if len(result_msg) > 4000:
             parts = [result_msg[i:i+4000] for i in range(0, len(result_msg), 4000)]
             for i, part in enumerate(parts):
@@ -1817,11 +1824,9 @@ async def process_pdf_summary(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await update.message.reply_text(result_msg, parse_mode=ParseMode.MARKDOWN)
         
-        # تنظيف البيانات المؤقتة
         context.user_data.pop('summary_service', None)
         context.user_data.pop('summary_price', None)
         
-        # إرسال إشعار للمشرف
         if is_admin(ADMIN_ID) and db.get_setting('admin_notifications') == '1':
             await send_admin_notification(context, f"""
             📚 *عملية تلخيص PDF جديدة*
@@ -1845,7 +1850,6 @@ async def service_qna(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user_data = db.get_user(user_id)
     
-    # التحقق من تفعيل الخدمة
     if not db.is_service_active('qna'):
         await query.edit_message_text(
             "⏸️ هذه الخدمة معطلة مؤقتاً من قبل الإدارة.",
@@ -1853,7 +1857,6 @@ async def service_qna(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # التحقق من الرصيد
     service_price = db.get_service_price('qna')
     if user_data['balance'] < service_price:
         await query.edit_message_text(
@@ -1892,15 +1895,12 @@ async def process_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     service_price = context.user_data.get('qna_price', db.get_service_price('qna'))
     
-    # التحقق من الرصيد
     if not db.deduct_balance(user_id, service_price):
         await update.message.reply_text("❌ رصيدك غير كافي. يرجى الشحن وحاول مرة أخرى.")
         return ConversationHandler.END
     
-    # خصم المبلغ
     db.add_transaction(user_id, -service_price, 'payment', 'qna', 'سؤال وجواب بالذكاء الاصطناعي')
     
-    # معالجة السؤال
     question_text = ""
     if update.message.text:
         question_text = update.message.text
@@ -1912,10 +1912,8 @@ async def process_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤔 جارٍ تحليل سؤالك والبحث عن إجابة مناسبة...")
     
     try:
-        # استخدام الذكاء الاصطناعي للإجابة
         answer = await answer_question_with_gemini(question_text)
         
-        # إرسال الإجابة
         response_msg = f"""
         ✅ *تمت الإجابة على سؤالك*
         
@@ -1930,7 +1928,6 @@ async def process_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         📌 *ملاحظة:* الإجابة مبنية على الذكاء الاصطناعي المتخصص في المناهج التعليمية.
         """
         
-        # تقسيم الإجابة إذا كانت طويلة
         if len(response_msg) > 4096:
             parts = textwrap.wrap(response_msg, width=4000)
             for i, part in enumerate(parts):
@@ -1941,7 +1938,6 @@ async def process_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(response_msg, parse_mode=ParseMode.MARKDOWN)
         
-        # إرسال إشعار للمشرف
         if is_admin(ADMIN_ID) and db.get_setting('admin_notifications') == '1':
             await send_admin_notification(context, f"""
             ❓ *عملية سؤال وجواب جديدة*
@@ -1954,11 +1950,9 @@ async def process_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"QnA error: {e}")
         await update.message.reply_text("❌ حدث خطأ أثناء معالجة سؤالك. يرجى المحاولة مرة أخرى.")
-        # إعادة الرصيد في حالة الخطأ
         db.add_balance(user_id, service_price)
         db.add_transaction(user_id, service_price, 'refund', 'qna', 'استرجاع رصيد بسبب خطأ')
     
-    # تنظيف البيانات المؤقتة
     context.user_data.pop('qna_service', None)
     context.user_data.pop('qna_price', None)
     
@@ -1972,7 +1966,6 @@ async def service_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user_data = db.get_user(user_id)
     
-    # التحقق من تفعيل الخدمة
     if not db.is_service_active('help_student'):
         await query.edit_message_text(
             "⏸️ هذه الخدمة معطلة مؤقتاً من قبل الإدارة.",
@@ -1980,7 +1973,6 @@ async def service_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # التحقق من الرصيد
     service_price = db.get_service_price('help_student')
     if user_data['balance'] < service_price:
         await query.edit_message_text(
@@ -2022,15 +2014,12 @@ async def process_help_question(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     service_price = context.user_data.get('help_price', db.get_service_price('help_student'))
     
-    # التحقق من الرصيد
     if not db.deduct_balance(user_id, service_price):
         await update.message.reply_text("❌ رصيدك غير كافي. يرجى الشحن وحاول مرة أخرى.")
         return ConversationHandler.END
     
-    # خصم المبلغ
     db.add_transaction(user_id, -service_price, 'payment', 'help_student', 'سؤال ساعدوني طالب')
     
-    # معالجة السؤال
     question_text = ""
     question_image = None
     
@@ -2041,13 +2030,11 @@ async def process_help_question(update: Update, context: ContextTypes.DEFAULT_TY
     
     if update.message.photo:
         question_image = update.message.photo[-1].file_id
-    elif update.message.document:
+    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/'):
         question_image = update.message.document.file_id
     
-    # حفظ السؤال في قاعدة البيانات
     question_id = db.add_student_question(user_id, question_text, question_image, service_price)
     
-    # إرسال تأكيد للمستخدم
     await update.message.reply_text(f"""
     ✅ *تم استلام سؤالك بنجاح*
     
@@ -2059,13 +2046,12 @@ async def process_help_question(update: Update, context: ContextTypes.DEFAULT_TY
     📌 ستتم إشعارتك عند الموافقة والنشر.
     """, parse_mode=ParseMode.MARKDOWN)
     
-    # إرسال إشعار للمشرف للموافقة
     if is_admin(ADMIN_ID):
         try:
             approve_keyboard = [
                 [
-                    InlineKeyboardButton("✅ الموافقة", callback_data=f"approve_question_{question_id}"),
-                    InlineKeyboardButton("❌ الرفض", callback_data=f"reject_question_{question_id}")
+                    InlineKeyboardButton("✅ الموافقة", callback_data=f"admin_approve_question_{question_id}"),
+                    InlineKeyboardButton("❌ الرفض", callback_data=f"admin_reject_question_{question_id}")
                 ]
             ]
             
@@ -2097,7 +2083,6 @@ async def process_help_question(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception as e:
             logger.error(f"Error sending admin notification: {e}")
     
-    # تنظيف البيانات المؤقتة
     context.user_data.pop('help_service', None)
     context.user_data.pop('help_price', None)
     
@@ -2110,7 +2095,6 @@ async def service_materials(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     
-    # التحقق من تفعيل الخدمة
     if not db.is_service_active('study_materials'):
         await query.edit_message_text(
             "⏸️ هذه الخدمة معطلة مؤقتاً من قبل الإدارة.",
@@ -2118,7 +2102,6 @@ async def service_materials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # الحصول على جميع المراحل
     materials = db.get_study_materials()
     
     if not materials:
@@ -2128,7 +2111,6 @@ async def service_materials(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # تجميع المواد حسب المرحلة
     stages = {}
     for material in materials:
         stage = material['stage'] or 'غير مصنف'
@@ -2136,7 +2118,6 @@ async def service_materials(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stages[stage] = []
         stages[stage].append(material)
     
-    # إنشاء لوحة المفاتيح
     keyboard = []
     for stage in sorted(stages.keys()):
         keyboard.append([InlineKeyboardButton(f"📚 {stage} ({len(stages[stage])})", 
@@ -2167,10 +2148,9 @@ async def show_stage_materials(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
     
-    # حفظ الفهرس الحالي
     context.user_data['material_index'] = 0
     context.user_data['current_stage'] = stage
-    context.user_data['current_materials'] = [dict(m) for m in materials]
+    context.user_data['current_materials'] = materials
     
     await show_material_page(update, context)
 
@@ -2192,10 +2172,8 @@ async def show_material_page(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     material = materials[idx]
     
-    # إنشاء لوحة المفاتيح
     keyboard = []
     
-    # أزرار التنقل
     nav_buttons = []
     if idx > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="material_prev"))
@@ -2208,13 +2186,10 @@ async def show_material_page(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if nav_buttons:
         keyboard.append(nav_buttons)
     
-    # زر تحميل الملف
     keyboard.append([InlineKeyboardButton("📥 تحميل الملف", callback_data=f"download_material_{material['material_id']}")])
     
-    # زر العودة
     keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="service_materials")])
     
-    # عرض تفاصيل المادة
     material_text = f"""
     📖 *{material['title']}*
     
@@ -2258,7 +2233,6 @@ async def download_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        # إرسال الملف
         await context.bot.send_document(
             chat_id=query.from_user.id,
             document=material['file_id'],
@@ -2281,7 +2255,6 @@ async def vip_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     
-    # التحقق من تفعيل الخدمة
     if not db.is_service_active('vip_lectures'):
         await query.edit_message_text(
             "⏸️ هذه الخدمة معطلة مؤقتاً من قبل الإدارة.",
@@ -2289,7 +2262,6 @@ async def vip_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # الحصول على المحاضرات المعتمدة
     lectures = db.get_approved_lectures(limit=50)
     
     if not lectures:
@@ -2300,18 +2272,15 @@ async def vip_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # عرض أول محاضرة مع خيارات التنقل
     if 'lecture_index' not in context.user_data:
         context.user_data['lecture_index'] = 0
-        context.user_data['current_lectures'] = [dict(l) for l in lectures]
+        context.user_data['current_lectures'] = lectures
     
     idx = context.user_data['lecture_index']
     lecture = context.user_data['current_lectures'][idx]
     
-    # إنشاء لوحة المفاتيح
     keyboard = []
     
-    # أزرار التنقل
     nav_buttons = []
     if idx > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="lecture_prev"))
@@ -2324,7 +2293,6 @@ async def vip_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav_buttons:
         keyboard.append(nav_buttons)
     
-    # زر شراء المحاضرة
     if lecture['price'] > 0:
         price_text = f"💵 {format_currency(lecture['price'])}"
         keyboard.append([InlineKeyboardButton(f"🛒 شراء المحاضرة ({price_text})", 
@@ -2333,15 +2301,12 @@ async def vip_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("📥 تحميل مجاني", 
                        callback_data=f"download_lecture_{lecture['lecture_id']}")])
     
-    # زر العودة
     keyboard.append([InlineKeyboardButton("🏠 الرئيسية", callback_data="start")])
     
-    # حساب متوسط التقييم
     avg_rating = 0
     if lecture['rating_count'] > 0:
         avg_rating = lecture['rating_total'] / lecture['rating_count']
     
-    # عرض تفاصيل المحاضرة
     lecture_text = f"""
     🎬 *{lecture['title']}*
     
@@ -2375,6 +2340,44 @@ async def navigate_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await vip_lectures(update, context)
 
+async def download_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تحميل محاضرة مجانية"""
+    query = update.callback_query
+    await query.answer()
+    
+    lecture_id = int(query.data.replace("download_lecture_", ""))
+    user_id = query.from_user.id
+    
+    lecture = db.get_lecture_by_id(lecture_id)
+    if not lecture:
+        await query.edit_message_text("❌ المحاضرة غير متاحة.")
+        return
+    
+    try:
+        await context.bot.send_document(
+            chat_id=user_id,
+            document=lecture['file_id'],
+            caption=f"""
+            🎬 *{lecture['title']}*
+            
+            👨‍🏫 المدرس: {lecture['first_name']}
+            📝 {lecture['description'][:100]}...
+            
+            📥 تم تحميل المحاضرة بنجاح.
+            """
+        )
+        
+        db.update_lecture_stats(lecture_id)
+        
+        await query.edit_message_text(
+            f"✅ *تم تحميل المحاضرة بنجاح*\n\n{lecture['title']}",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
+    except Exception as e:
+        logger.error(f"Error sending lecture: {e}")
+        await query.edit_message_text("❌ حدث خطأ أثناء إرسال المحاضرة.")
+
 async def buy_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """شراء محاضرة"""
     query = update.callback_query
@@ -2383,13 +2386,11 @@ async def buy_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lecture_id = int(query.data.replace("buy_lecture_", ""))
     user_id = query.from_user.id
     
-    # الحصول على معلومات المحاضرة
     lecture = db.get_lecture_by_id(lecture_id)
     if not lecture:
         await query.edit_message_text("❌ المحاضرة غير متاحة.")
         return
     
-    # التحقق من الرصيد
     user_balance = db.get_user_balance(user_id)
     if user_balance < lecture['price']:
         await query.edit_message_text(
@@ -2398,14 +2399,11 @@ async def buy_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # خصم المبلغ
     if not db.deduct_balance(user_id, lecture['price']):
         await query.edit_message_text("❌ فشل في عملية الشراء. يرجى المحاولة لاحقاً.")
         return
     
-    # تسجيل عملية البيع
     if db.add_vip_sale(lecture_id, user_id, lecture['price']):
-        # إرسال الملف للمستخدم
         try:
             await context.bot.send_document(
                 chat_id=user_id,
@@ -2422,7 +2420,6 @@ async def buy_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """
             )
             
-            # تحديث رسالة الأصلية
             await query.edit_message_text(
                 f"""
                 ✅ *تم شراء المحاضرة بنجاح*
@@ -2437,7 +2434,6 @@ async def buy_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=get_main_menu_keyboard(user_id)
             )
             
-            # إرسال إشعار للمدرس
             earnings = db.get_vip_earnings(lecture['teacher_id'])
             if earnings:
                 teacher_msg = f"""
@@ -2456,7 +2452,6 @@ async def buy_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     pass
             
-            # إرسال إشعار للمشرف
             if is_admin(ADMIN_ID) and db.get_setting('admin_notifications') == '1':
                 await send_admin_notification(context, f"""
                 💰 *عملية بيع محاضرة جديدة*
@@ -2472,12 +2467,10 @@ async def buy_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error sending lecture file: {e}")
             await query.edit_message_text("❌ حدث خطأ أثناء إرسال الملف. يرجى التواصل مع الدعم.")
-            # إعادة الرصيد في حالة الخطأ
             db.add_balance(user_id, lecture['price'])
             db.add_transaction(user_id, lecture['price'], 'refund', 'vip_lecture', 'استرجاع رصيد بسبب خطأ')
     else:
         await query.edit_message_text("❌ فشل في عملية الشراء. يرجى المحاولة لاحقاً.")
-        # إعادة الرصيد
         db.add_balance(user_id, lecture['price'])
 
 async def vip_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2487,7 +2480,6 @@ async def vip_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     
-    # التحقق من تفعيل الخدمة
     if not db.is_service_active('vip_subscribe'):
         await query.edit_message_text(
             "⏸️ هذه الخدمة معطلة مؤقتاً من قبل الإدارة.",
@@ -2495,10 +2487,9 @@ async def vip_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # التحقق إذا كان مشترك بالفعل
     if db.is_vip_subscriber(user_id):
         vip_info = db.get_vip_subscriber(user_id)
-        expiry_date = datetime.datetime.fromisoformat(vip_info['expiry_date'])
+        expiry_date = datetime.datetime.fromisoformat(vip_info['expiry_date'].replace('Z', '+00:00'))
         
         await query.edit_message_text(
             f"""
@@ -2521,7 +2512,6 @@ async def vip_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # عرض معلومات الاشتراك
     subscription_price = db.get_vip_subscription_price()
     
     keyboard = [
@@ -2569,7 +2559,6 @@ async def confirm_vip_subscription(update: Update, context: ContextTypes.DEFAULT
     user_id = query.from_user.id
     subscription_price = db.get_vip_subscription_price()
     
-    # التحقق من الرصيد
     user_balance = db.get_user_balance(user_id)
     if user_balance < subscription_price:
         await query.edit_message_text(
@@ -2578,16 +2567,13 @@ async def confirm_vip_subscription(update: Update, context: ContextTypes.DEFAULT
         )
         return
     
-    # خصم المبلغ
     if not db.deduct_balance(user_id, subscription_price):
         await query.edit_message_text("❌ فشل في عملية الاشتراك. يرجى المحاولة لاحقاً.")
         return
     
-    # إضافة اشتراك VIP
     db.add_vip_subscriber(user_id, 30)
     db.add_transaction(user_id, -subscription_price, 'payment', 'vip_subscription', 'اشتراك VIP شهري')
     
-    # إرسال رسالة النجاح
     await query.edit_message_text(
         f"""
         ✅ *تم الاشتراك في VIP بنجاح*
@@ -2611,7 +2597,6 @@ async def confirm_vip_subscription(update: Update, context: ContextTypes.DEFAULT
         reply_markup=get_main_menu_keyboard(user_id)
     )
     
-    # إرسال إشعار للمشرف
     if is_admin(ADMIN_ID) and db.get_setting('admin_notifications') == '1':
         await send_admin_notification(context, f"""
         👑 *اشتراك VIP جديد*
@@ -2628,7 +2613,6 @@ async def vip_upload_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     user_id = query.from_user.id
     
-    # التحقق من اشتراك VIP
     if not db.is_vip_subscriber(user_id):
         await query.edit_message_text(
             "❌ هذه الميزة للمشتركين في VIP فقط.\n\nاشترك في VIP لرفع محاضراتك وكسب الأرباح.",
@@ -2671,7 +2655,6 @@ async def process_vip_lecture_file(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("❌ يرجى إرسال ملف فيديو. حاول مرة أخرى:")
         return VIP_LECTURE_FILE
     
-    # التحقق من حجم الملف
     file_size = 0
     file_id = None
     
@@ -2682,7 +2665,7 @@ async def process_vip_lecture_file(update: Update, context: ContextTypes.DEFAULT
         file_size = update.message.document.file_size or 0
         file_id = update.message.document.file_id
     
-    if file_size > 100 * 1024 * 1024:  # 100MB
+    if file_size > 100 * 1024 * 1024:
         await update.message.reply_text("❌ حجم الملف يتجاوز 100MB. يرجى إرسال ملف أصغر:")
         return VIP_LECTURE_FILE
     
@@ -2713,21 +2696,17 @@ async def process_vip_lecture_price(update: Update, context: ContextTypes.DEFAUL
         
         user_id = update.effective_user.id
         
-        # جمع البيانات
         file_id = context.user_data.get('lecture_file_id')
         title = context.user_data.get('lecture_title')
         description = context.user_data.get('lecture_desc')
         
-        # حفظ المحاضرة في قاعدة البيانات
         lecture_id = db.add_vip_lecture(user_id, file_id, title, description, price)
         
-        # تنظيف البيانات المؤقتة
         context.user_data.pop('uploading_lecture', None)
         context.user_data.pop('lecture_file_id', None)
         context.user_data.pop('lecture_title', None)
         context.user_data.pop('lecture_desc', None)
         
-        # إرسال تأكيد للمستخدم
         await update.message.reply_text(f"""
         ✅ *تم رفع المحاضرة بنجاح*
         
@@ -2741,7 +2720,6 @@ async def process_vip_lecture_price(update: Update, context: ContextTypes.DEFAUL
         *تذكر:* 60% من المبيعات ستكون أرباحاً لك.
         """, parse_mode=ParseMode.MARKDOWN)
         
-        # إرسال إشعار للمشرف للموافقة
         if is_admin(ADMIN_ID):
             try:
                 approve_keyboard = [
@@ -2762,7 +2740,6 @@ async def process_vip_lecture_price(update: Update, context: ContextTypes.DEFAUL
                 #محاضرة_{lecture_id}
                 """
                 
-                # إرسال معاينة المحاضرة للمشرف
                 if file_id:
                     try:
                         await context.bot.send_video(
@@ -2801,7 +2778,6 @@ async def vip_my_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     
-    # التحقق من اشتراك VIP
     if not db.is_vip_subscriber(user_id):
         await query.edit_message_text(
             "❌ هذه الميزة للمشتركين في VIP فقط.",
@@ -2809,7 +2785,6 @@ async def vip_my_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # الحصول على محاضرات المدرس
     lectures = db.get_teacher_lectures(user_id)
     
     if not lectures:
@@ -2819,7 +2794,6 @@ async def vip_my_lectures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # عرض المحاضرات
     lectures_text = "🎬 *محاضراتي*\n\n"
     
     for lecture in lectures:
@@ -2860,7 +2834,6 @@ async def vip_my_earnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     
-    # التحقق من اشتراك VIP
     if not db.is_vip_subscriber(user_id):
         await query.edit_message_text(
             "❌ هذه الميزة للمشتركين في VIP فقط.",
@@ -2868,7 +2841,6 @@ async def vip_my_earnings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # الحصول على أرباح المدرس
     earnings = db.get_vip_earnings(user_id)
     
     if not earnings:
@@ -2974,7 +2946,6 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user_data = db.get_user(user_id)
     
-    # الحصول على إحصائيات إضافية
     transactions = db.get_user_transactions(user_id, limit=5)
     exemptions = db.get_user_exemptions(user_id)
     
@@ -3005,7 +2976,7 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if db.is_vip_subscriber(user_id):
         vip_info = db.get_vip_subscriber(user_id)
-        expiry_date = datetime.datetime.fromisoformat(vip_info['expiry_date'])
+        expiry_date = datetime.datetime.fromisoformat(vip_info['expiry_date'].replace('Z', '+00:00'))
         days_left = (expiry_date - datetime.datetime.now()).days
         
         stats_text += f"""
@@ -3016,7 +2987,6 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         • الأيام المتبقية: {days_left} يوم
         """
         
-        # إضافة إحصائيات VIP إذا كان مدرساً
         earnings = db.get_vip_earnings(user_id)
         if earnings:
             stats_text += f"""
@@ -3081,7 +3051,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     *الإحصائيات السريعة:*
     """
     
-    # إحصائيات سريعة
     total_users = db.get_user_count()
     active_users = db.get_active_users_count(7)
     vip_subscribers = len(db.get_all_vip_subscribers())
@@ -3126,11 +3095,9 @@ async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(query.from_user.id):
         return
     
-    # استخراج رقم الصفحة
     data = query.data.replace("admin_users_list_", "")
     page = int(data) if data.isdigit() else 1
     
-    # إعداد الترحيل
     limit = 10
     offset = (page - 1) * limit
     
@@ -3154,7 +3121,6 @@ async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
         """
     
-    # إنشاء أزرار الترحيل
     keyboard = []
     nav_buttons = []
     
@@ -3163,7 +3129,6 @@ async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     nav_buttons.append(InlineKeyboardButton(f"صفحة {page}", callback_data="noop"))
     
-    # التحقق إذا كان هناك المزيد من المستخدمين
     total_users = db.get_user_count()
     if offset + limit < total_users:
         nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data=f"admin_users_list_{page+1}"))
@@ -3171,7 +3136,6 @@ async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav_buttons:
         keyboard.append(nav_buttons)
     
-    # أزرار الإدارة
     keyboard.append([
         InlineKeyboardButton("🚫 حظر", callback_data=f"admin_ban_user_page_{page}"),
         InlineKeyboardButton("✅ فك حظر", callback_data=f"admin_unban_user_page_{page}")
@@ -3193,7 +3157,6 @@ async def admin_ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(query.from_user.id):
         return
     
-    # التحقق إذا كان من صفحة معينة
     data = query.data.replace("admin_ban_user_page_", "")
     page = int(data) if data.isdigit() else 0
     
@@ -3231,7 +3194,6 @@ async def process_ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         db.ban_user(user_id)
         
-        # إرسال إشعار للمستخدم
         try:
             await update.message.bot.send_message(
                 user_id,
@@ -3269,7 +3231,6 @@ async def admin_unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(query.from_user.id):
         return
     
-    # التحقق إذا كان من صفحة معينة
     data = query.data.replace("admin_unban_user_page_", "")
     page = int(data) if data.isdigit() else 0
     
@@ -3303,7 +3264,6 @@ async def process_unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         db.unban_user(user_id)
         
-        # إرسال إشعار للمستخدم
         try:
             await update.message.bot.send_message(
                 user_id,
@@ -3417,7 +3377,6 @@ async def process_promote_user(update: Update, context: ContextTypes.DEFAULT_TYP
         
         db.promote_to_admin(user_id)
         
-        # إرسال إشعار للمستخدم
         try:
             await update.message.bot.send_message(
                 user_id,
@@ -3445,11 +3404,9 @@ async def admin_transactions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not is_admin(query.from_user.id):
         return
     
-    # استخراج رقم الصفحة
     data = query.data.replace("admin_transactions_", "")
     page = int(data) if data.isdigit() else 1
     
-    # إعداد الترحيل
     limit = 10
     offset = (page - 1) * limit
     
@@ -3474,7 +3431,6 @@ async def admin_transactions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
         """
     
-    # إنشاء أزرار الترحيل
     keyboard = []
     nav_buttons = []
     
@@ -3483,7 +3439,6 @@ async def admin_transactions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     nav_buttons.append(InlineKeyboardButton(f"صفحة {page}", callback_data="noop"))
     
-    # نضيف زر للصفحة التالية (دائماً نعرضه)
     nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data=f"admin_transactions_{page+1}"))
     
     if nav_buttons:
@@ -3496,6 +3451,155 @@ async def admin_transactions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+async def admin_manage_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة الأسئلة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    questions = db.get_pending_questions()
+    
+    if not questions:
+        await query.edit_message_text("✅ لا توجد أسئلة منتظرة للمراجعة.")
+        return
+    
+    if 'question_index' not in context.user_data:
+        context.user_data['question_index'] = 0
+        context.user_data['current_questions'] = questions
+    
+    idx = context.user_data['question_index']
+    question = context.user_data['current_questions'][idx]
+    
+    keyboard = []
+    
+    nav_buttons = []
+    if idx > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="question_prev"))
+    
+    nav_buttons.append(InlineKeyboardButton(f"{idx+1}/{len(questions)}", callback_data="noop"))
+    
+    if idx < len(questions) - 1:
+        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data="question_next"))
+    
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
+    keyboard.append([
+        InlineKeyboardButton("✅ الموافقة", callback_data=f"admin_approve_question_{question['question_id']}"),
+        InlineKeyboardButton("❌ الرفض", callback_data=f"admin_reject_question_{question['question_id']}")
+    ])
+    
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")])
+    
+    question_text = f"""
+    ❓ *سؤال منتظر للمراجعة* #{question['question_id']}
+    
+    👤 *الطالب:* {question['first_name']} (ID: {question['user_id']})
+    💰 *المبلغ المدفوع:* {format_currency(question['price_paid'])}
+    
+    📝 *السؤال:*
+    {question['question_text'][:300]}...
+    
+    📅 *تاريخ الإرسال:* {format_date(question['created_at'])}
+    """
+    
+    await query.edit_message_text(
+        question_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def navigate_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """التنقل بين الأسئلة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "question_prev":
+        context.user_data['question_index'] -= 1
+    elif query.data == "question_next":
+        context.user_data['question_index'] += 1
+    
+    await admin_manage_questions(update, context)
+
+async def admin_approve_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """موافقة على سؤال"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    question_id = int(query.data.replace("admin_approve_question_", ""))
+    
+    if db.approve_question(question_id, query.from_user.id):
+        question = db.get_question_by_id(question_id)
+        
+        if question:
+            try:
+                student_msg = f"""
+                ✅ *تمت الموافقة على سؤالك*
+                
+                ❓ سؤالك: {question['question_text'][:100]}...
+                
+                📌 السؤال الآن منشور في قسم الأسئلة.
+                ℹ️ سيتم إشعارك عند تلقي إجابة.
+                """
+                await context.bot.send_message(question['user_id'], student_msg, parse_mode=ParseMode.MARKDOWN)
+            except:
+                pass
+        
+        await query.edit_message_text(
+            f"✅ تمت الموافقة على السؤال #{question_id}",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ فشل في الموافقة على السؤال #{question_id}",
+            reply_markup=get_admin_keyboard()
+        )
+
+async def admin_reject_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """رفض سؤال"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    question_id = int(query.data.replace("admin_reject_question_", ""))
+    
+    question = db.get_question_by_id(question_id)
+    
+    if db.reject_question(question_id):
+        if question:
+            try:
+                student_msg = f"""
+                ❌ *تم رفض سؤالك*
+                
+                ❓ سؤالك: {question['question_text'][:100]}...
+                
+                📌 السؤال تم رفضه من قبل الإدارة.
+                💰 تم إعادة رصيدك: {format_currency(question['price_paid'])}
+                """
+                await context.bot.send_message(question['user_id'], student_msg, parse_mode=ParseMode.MARKDOWN)
+                
+                db.add_balance(question['user_id'], question['price_paid'])
+                db.add_transaction(question['user_id'], question['price_paid'], 'refund', 'help_student', 'استرجاع رصيد لرفض السؤال')
+            except:
+                pass
+        
+        await query.edit_message_text(
+            f"❌ تم رفض السؤال #{question_id}",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ فشل في رفض السؤال #{question_id}",
+            reply_markup=get_admin_keyboard()
+        )
 
 async def admin_finance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إدارة الشحن والخصم"""
@@ -3564,12 +3668,10 @@ async def process_charge_amount(update: Update, context: ContextTypes.DEFAULT_TY
         user_name = context.user_data.get('charge_user_name')
         admin_id = update.effective_user.id
         
-        # شحن الرصيد
         db.add_balance(user_id, amount)
         db.add_transaction(user_id, amount, 'charge', 'admin', 
                           f'شحن من المشرف {admin_id}', admin_id)
         
-        # إرسال إشعار للمستخدم
         try:
             await update.message.bot.send_message(
                 user_id,
@@ -3587,7 +3689,6 @@ async def process_charge_amount(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=get_admin_keyboard()
         )
         
-        # تنظيف البيانات المؤقتة
         context.user_data.pop('charge_user_id', None)
         context.user_data.pop('charge_user_name', None)
         context.user_data.pop('charge_user_balance', None)
@@ -3659,12 +3760,10 @@ async def process_deduct_amount(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return ADMIN_DEDUCT_AMOUNT
         
-        # خصم الرصيد
         if db.deduct_balance(user_id, amount):
             db.add_transaction(user_id, -amount, 'deduct', 'admin', 
                               f'خصم من المشرف {admin_id}', admin_id)
             
-            # إرسال إشعار للمستخدم
             try:
                 await update.message.bot.send_message(
                     user_id,
@@ -3684,7 +3783,6 @@ async def process_deduct_amount(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("❌ فشل في عملية الخصم. يرجى المحاولة لاحقاً.")
         
-        # تنظيف البيانات المؤقتة
         context.user_data.pop('deduct_user_id', None)
         context.user_data.pop('deduct_user_name', None)
         context.user_data.pop('deduct_user_balance', None)
@@ -3746,6 +3844,98 @@ async def admin_finance_stats(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+async def admin_deduct_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """خصم أرباح مدرس VIP"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    await query.edit_message_text(
+        "💸 *خصم أرباح مدرس VIP*\n\nأرسل أيدي المدرس الذي تريد خصم أرباحه:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return ADMIN_VIP_DEDUCT_USER
+
+async def process_vip_deduct_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة أيدي المدرس للخصم"""
+    try:
+        user_id = int(update.message.text)
+        
+        if not db.is_vip_subscriber(user_id):
+            await update.message.reply_text("❌ هذا المستخدم ليس مشتركاً في VIP. أرسل أيدي مدرس VIP:")
+            return ADMIN_VIP_DEDUCT_USER
+        
+        earnings = db.get_vip_earnings(user_id)
+        if not earnings or earnings['available_balance'] <= 0:
+            await update.message.reply_text("❌ هذا المدرس لا يمتلك أرباحاً قابلة للسحب.")
+            return ADMIN_VIP_DEDUCT_USER
+        
+        context.user_data['vip_deduct_user_id'] = user_id
+        context.user_data['vip_deduct_balance'] = earnings['available_balance']
+        
+        await update.message.reply_text(
+            f"👨‍🏫 المدرس: ID {user_id}\n"
+            f"💰 الأرباح المتاحة: {format_currency(earnings['available_balance'])}\n\n"
+            f"💵 أرسل المبلغ الذي تريد خصمه:",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        return ADMIN_VIP_DEDUCT_AMOUNT
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إرسال أيدي صحيح (أرقام فقط):")
+        return ADMIN_VIP_DEDUCT_USER
+
+async def process_vip_deduct_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة مبلغ خصم الأرباح"""
+    try:
+        amount = int(update.message.text)
+        if amount <= 0:
+            await update.message.reply_text("❌ المبلغ يجب أن يكون أكبر من صفر. أرسل مبلغاً صحيحاً:")
+            return ADMIN_VIP_DEDUCT_AMOUNT
+        
+        user_id = context.user_data.get('vip_deduct_user_id')
+        available_balance = context.user_data.get('vip_deduct_balance')
+        
+        if amount > available_balance:
+            await update.message.reply_text(
+                f"❌ المبلغ يتجاوز الأرباح المتاحة.\n"
+                f"💰 الأرباح المتاحة: {format_currency(available_balance)}\n\n"
+                f"💵 أرسل مبلغاً أقل أو يساوي الأرباح المتاحة:"
+            )
+            return ADMIN_VIP_DEDUCT_AMOUNT
+        
+        if db.deduct_vip_earnings(user_id, amount):
+            try:
+                teacher_msg = f"""
+                💸 *تم سحب من أرباحك*
+                
+                ❌ المبلغ: {format_currency(amount)}
+                🏦 الأرباح المتبقية: {format_currency(available_balance - amount)}
+                
+                📞 للاستفسار يرجى التواصل مع الدعم الفني.
+                """
+                await update.message.bot.send_message(user_id, teacher_msg, parse_mode=ParseMode.MARKDOWN)
+            except:
+                pass
+            
+            await update.message.reply_text(
+                f"✅ تم خصم {format_currency(amount)} من أرباح المدرس {user_id}",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await update.message.reply_text("❌ فشل في عملية الخصم. يرجى المحاولة لاحقاً.")
+        
+        context.user_data.pop('vip_deduct_user_id', None)
+        context.user_data.pop('vip_deduct_balance', None)
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إرسال مبلغ صحيح (أرقام فقط):")
+        return ADMIN_VIP_DEDUCT_AMOUNT
+
 # ====================== إدارة VIP الكاملة ======================
 async def admin_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إدارة نظام VIP"""
@@ -3769,7 +3959,6 @@ async def admin_vip_subscribers(update: Update, context: ContextTypes.DEFAULT_TY
     if not is_admin(query.from_user.id):
         return
     
-    # استخراج رقم الصفحة
     data = query.data.replace("admin_vip_subscribers_", "")
     page = int(data) if data.isdigit() else 1
     
@@ -3779,7 +3968,6 @@ async def admin_vip_subscribers(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("📭 لا يوجد مشتركين في VIP حالياً.")
         return
     
-    # الترحيل
     limit = 10
     offset = (page - 1) * limit
     page_subscribers = subscribers[offset:offset + limit]
@@ -3787,7 +3975,7 @@ async def admin_vip_subscribers(update: Update, context: ContextTypes.DEFAULT_TY
     subscribers_text = f"👑 *المشتركون في VIP - الصفحة {page}*\n\n"
     
     for sub in page_subscribers:
-        expiry_date = datetime.datetime.fromisoformat(sub['expiry_date'])
+        expiry_date = datetime.datetime.fromisoformat(sub['expiry_date'].replace('Z', '+00:00'))
         days_left = (expiry_date - datetime.datetime.now()).days
         
         subscribers_text += f"""
@@ -3799,7 +3987,6 @@ async def admin_vip_subscribers(update: Update, context: ContextTypes.DEFAULT_TY
         ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
         """
     
-    # إنشاء أزرار الترحيل
     keyboard = []
     nav_buttons = []
     
@@ -3814,7 +4001,6 @@ async def admin_vip_subscribers(update: Update, context: ContextTypes.DEFAULT_TY
     if nav_buttons:
         keyboard.append(nav_buttons)
     
-    # أزرار الإدارة
     keyboard.append([
         InlineKeyboardButton("🚫 إلغاء اشتراك", callback_data="admin_cancel_vip"),
         InlineKeyboardButton("🔄 تجديد اشتراك", callback_data="admin_renew_vip")
@@ -3828,6 +4014,94 @@ async def admin_vip_subscribers(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+async def admin_cancel_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء اشتراك VIP"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    await query.edit_message_text(
+        "🚫 *إلغاء اشتراك VIP*\n\nأرسل أيدي المستخدم الذي تريد إلغاء اشتراكه:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return "CANCEL_VIP"
+
+async def process_cancel_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إلغاء اشتراك VIP"""
+    try:
+        user_id = int(update.message.text)
+        
+        if not db.is_vip_subscriber(user_id):
+            await update.message.reply_text("❌ هذا المستخدم ليس مشتركاً في VIP. أرسل أيدي مشترك VIP:")
+            return "CANCEL_VIP"
+        
+        if db.cancel_vip_subscription(user_id):
+            try:
+                await update.message.bot.send_message(
+                    user_id,
+                    "🚫 *تم إلغاء اشتراكك في VIP*\n\nللاستفسار يرجى التواصل مع الدعم الفني.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except:
+                pass
+            
+            await update.message.reply_text(
+                f"✅ تم إلغاء اشتراك المستخدم {user_id} في VIP",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await update.message.reply_text("❌ فشل في إلغاء الاشتراك. يرجى المحاولة لاحقاً.")
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إرسال أيدي صحيح (أرقام فقط):")
+        return "CANCEL_VIP"
+
+async def admin_renew_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تجديد اشتراك VIP"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    await query.edit_message_text(
+        "🔄 *تجديد اشتراك VIP*\n\nأرسل أيدي المستخدم الذي تريد تجديد اشتراكه:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return "RENEW_VIP"
+
+async def process_renew_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تجديد اشتراك VIP"""
+    try:
+        user_id = int(update.message.text)
+        
+        if db.renew_vip_subscription(user_id, 30):
+            try:
+                await update.message.bot.send_message(
+                    user_id,
+                    "🔄 *تم تجديد اشتراكك في VIP*\n\nتمت إضافة 30 يوم لاشتراكك.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except:
+                pass
+            
+            await update.message.reply_text(
+                f"✅ تم تجديد اشتراك المستخدم {user_id} في VIP لمدة 30 يوم",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await update.message.reply_text("❌ فشل في تجديد الاشتراك. يرجى المحاولة لاحقاً.")
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إرسال أيدي صحيح (أرقام فقط):")
+        return "RENEW_VIP"
+
 async def admin_vip_expiring(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض المشتركين المنتهية اشتراكاتهم"""
     query = update.callback_query
@@ -3836,7 +4110,7 @@ async def admin_vip_expiring(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not is_admin(query.from_user.id):
         return
     
-    subscribers = db.get_expiring_vip_subscriptions(7)  # الـ 7 أيام القادمة
+    subscribers = db.get_expiring_vip_subscriptions(7)
     
     if not subscribers:
         await query.edit_message_text("✅ لا توجد اشتراكات VIP تنتهي خلال الأسبوع القادم.")
@@ -3845,7 +4119,7 @@ async def admin_vip_expiring(update: Update, context: ContextTypes.DEFAULT_TYPE)
     subscribers_text = "⏳ *اشتراكات VIP تنتهي قريباً*\n\n"
     
     for sub in subscribers:
-        expiry_date = datetime.datetime.fromisoformat(sub['expiry_date'])
+        expiry_date = datetime.datetime.fromisoformat(sub['expiry_date'].replace('Z', '+00:00'))
         days_left = (expiry_date - datetime.datetime.now()).days
         
         subscribers_text += f"""
@@ -3881,18 +4155,15 @@ async def admin_vip_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("✅ لا توجد محاضرات منتظرة للمراجعة.")
         return
     
-    # عرض أول محاضرة
     if 'pending_lecture_index' not in context.user_data:
         context.user_data['pending_lecture_index'] = 0
-        context.user_data['pending_lectures'] = [dict(l) for l in lectures]
+        context.user_data['pending_lectures'] = lectures
     
     idx = context.user_data['pending_lecture_index']
     lecture = context.user_data['pending_lectures'][idx]
     
-    # إنشاء لوحة المفاتيح
     keyboard = []
     
-    # أزرار التنقل
     nav_buttons = []
     if idx > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data="pending_lecture_prev"))
@@ -3905,7 +4176,6 @@ async def admin_vip_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav_buttons:
         keyboard.append(nav_buttons)
     
-    # أزرار الموافقة والرفض
     keyboard.append([
         InlineKeyboardButton("✅ الموافقة", callback_data=f"admin_approve_lecture_{lecture['lecture_id']}"),
         InlineKeyboardButton("❌ الرفض", callback_data=f"admin_reject_lecture_{lecture['lecture_id']}")
@@ -3913,7 +4183,6 @@ async def admin_vip_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_vip")])
     
-    # عرض تفاصيل المحاضرة
     lecture_text = f"""
     ⏳ *محاضرة منتظرة للمراجعة* #{lecture['lecture_id']}
     
@@ -3955,12 +4224,9 @@ async def admin_approve_lecture(update: Update, context: ContextTypes.DEFAULT_TY
     
     lecture_id = int(query.data.replace("admin_approve_lecture_", ""))
     
-    # الموافقة على المحاضرة
     if db.approve_lecture(lecture_id, query.from_user.id):
-        # الحصول على معلومات المحاضرة
         lecture = db.get_lecture_by_id(lecture_id)
         
-        # إرسال إشعار للمدرس
         if lecture:
             try:
                 teacher_msg = f"""
@@ -3997,12 +4263,9 @@ async def admin_reject_lecture(update: Update, context: ContextTypes.DEFAULT_TYP
     
     lecture_id = int(query.data.replace("admin_reject_lecture_", ""))
     
-    # رفض المحاضرة
     if db.reject_lecture(lecture_id):
-        # الحصول على معلومات المحاضرة
         lecture = db.get_lecture_by_id(lecture_id)
         
-        # إرسال إشعار للمدرس
         if lecture:
             try:
                 teacher_msg = f"""
@@ -4026,103 +4289,6 @@ async def admin_reject_lecture(update: Update, context: ContextTypes.DEFAULT_TYP
             f"❌ فشل في رفض المحاضرة #{lecture_id}",
             reply_markup=get_admin_keyboard()
         )
-
-async def admin_deduct_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """خصم أرباح مدرس VIP"""
-    query = update.callback_query
-    await query.answer()
-    
-    if not is_admin(query.from_user.id):
-        return
-    
-    await query.edit_message_text(
-        "💸 *خصم أرباح مدرس VIP*\n\nأرسل أيدي المدرس الذي تريد خصم أرباحه:",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    
-    return ADMIN_VIP_DEDUCT_USER
-
-async def process_vip_deduct_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة أيدي المدرس للخصم"""
-    try:
-        user_id = int(update.message.text)
-        
-        # التحقق إذا كان مدرس VIP
-        if not db.is_vip_subscriber(user_id):
-            await update.message.reply_text("❌ هذا المستخدم ليس مشتركاً في VIP. أرسل أيدي مدرس VIP:")
-            return ADMIN_VIP_DEDUCT_USER
-        
-        # الحصول على أرباح المدرس
-        earnings = db.get_vip_earnings(user_id)
-        if not earnings or earnings['available_balance'] <= 0:
-            await update.message.reply_text("❌ هذا المدرس لا يمتلك أرباحاً قابلة للسحب.")
-            return ADMIN_VIP_DEDUCT_USER
-        
-        context.user_data['vip_deduct_user_id'] = user_id
-        context.user_data['vip_deduct_balance'] = earnings['available_balance']
-        
-        await update.message.reply_text(
-            f"👨‍🏫 المدرس: ID {user_id}\n"
-            f"💰 الأرباح المتاحة: {format_currency(earnings['available_balance'])}\n\n"
-            f"💵 أرسل المبلغ الذي تريد خصمه:",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        
-        return ADMIN_VIP_DEDUCT_AMOUNT
-    except ValueError:
-        await update.message.reply_text("❌ يرجى إرسال أيدي صحيح (أرقام فقط):")
-        return ADMIN_VIP_DEDUCT_USER
-
-async def process_vip_deduct_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة مبلغ خصم الأرباح"""
-    try:
-        amount = int(update.message.text)
-        if amount <= 0:
-            await update.message.reply_text("❌ المبلغ يجب أن يكون أكبر من صفر. أرسل مبلغاً صحيحاً:")
-            return ADMIN_VIP_DEDUCT_AMOUNT
-        
-        user_id = context.user_data.get('vip_deduct_user_id')
-        available_balance = context.user_data.get('vip_deduct_balance')
-        
-        if amount > available_balance:
-            await update.message.reply_text(
-                f"❌ المبلغ يتجاوز الأرباح المتاحة.\n"
-                f"💰 الأرباح المتاحة: {format_currency(available_balance)}\n\n"
-                f"💵 أرسل مبلغاً أقل أو يساوي الأرباح المتاحة:"
-            )
-            return ADMIN_VIP_DEDUCT_AMOUNT
-        
-        # خصم الأرباح
-        if db.deduct_vip_earnings(user_id, amount):
-            # إرسال إشعار للمدرس
-            try:
-                teacher_msg = f"""
-                💸 *تم سحب من أرباحك*
-                
-                ❌ المبلغ: {format_currency(amount)}
-                🏦 الأرباح المتبقية: {format_currency(available_balance - amount)}
-                
-                📞 للاستفسار يرجى التواصل مع الدعم الفني.
-                """
-                await update.message.bot.send_message(user_id, teacher_msg, parse_mode=ParseMode.MARKDOWN)
-            except:
-                pass
-            
-            await update.message.reply_text(
-                f"✅ تم خصم {format_currency(amount)} من أرباح المدرس {user_id}",
-                reply_markup=get_admin_keyboard()
-            )
-        else:
-            await update.message.reply_text("❌ فشل في عملية الخصم. يرجى المحاولة لاحقاً.")
-        
-        # تنظيف البيانات المؤقتة
-        context.user_data.pop('vip_deduct_user_id', None)
-        context.user_data.pop('vip_deduct_balance', None)
-        
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ يرجى إرسال مبلغ صحيح (أرقام فقط):")
-        return ADMIN_VIP_DEDUCT_AMOUNT
 
 async def admin_vip_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض إحصائيات VIP"""
@@ -4159,7 +4325,6 @@ async def admin_vip_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     👑 مشتركين نشطين: {vip.get('active_vip', 0):,}
     """
     
-    # الحصول على أرباح المدرسين
     all_earnings = db.get_all_vip_earnings()
     if all_earnings:
         stats_text += "\n\n*أعلى المدرسين ربحاً:*"
@@ -4271,7 +4436,6 @@ async def process_update_vip_price(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text("❌ السعر يجب أن يكون 1000 دينار على الأقل. أرسل سعراً جديداً:")
             return "UPDATE_VIP_PRICE"
         
-        # تحديث السعر
         db.set_vip_subscription_price(new_price)
         
         await update.message.reply_text(
@@ -4307,7 +4471,6 @@ async def admin_toggle_services(update: Update, context: ContextTypes.DEFAULT_TY
     if not is_admin(query.from_user.id):
         return
     
-    # الحصول على جميع الخدمات
     services = db.get_all_services()
     
     keyboard = []
@@ -4339,7 +4502,6 @@ async def toggle_service_callback(update: Update, context: ContextTypes.DEFAULT_
     if not is_admin(query.from_user.id):
         return
     
-    # استخراج البيانات من callback_data
     data = query.data.replace("toggle_service_", "")
     parts = data.split("_")
     
@@ -4347,11 +4509,9 @@ async def toggle_service_callback(update: Update, context: ContextTypes.DEFAULT_
         service_name = parts[0]
         new_status = int(parts[1])
         
-        # تحديث حالة الخدمة
         if db.toggle_service(service_name, new_status):
             status_text = "مفعلة" if new_status == 1 else "معطلة"
             
-            # تحديث الرسالة
             services = db.get_all_services()
             keyboard = []
             
@@ -4410,7 +4570,6 @@ async def process_update_exemption_price(update: Update, context: ContextTypes.D
             await update.message.reply_text("❌ السعر يجب أن يكون 1000 دينار على الأقل. أرسل سعراً جديداً:")
             return "UPDATE_EXEMPTION_PRICE"
         
-        # تحديث السعر
         db.update_service_price('exemption_calc', new_price)
         
         await update.message.reply_text(
@@ -4423,7 +4582,298 @@ async def process_update_exemption_price(update: Update, context: ContextTypes.D
         await update.message.reply_text("❌ يرجى إرسال سعر صحيح (أرقام فقط):")
         return "UPDATE_EXEMPTION_PRICE"
 
-# إضافة معالجات مماثلة للخدمات الأخرى...
+async def admin_service_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعديل سعر تلخيص الملازم"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    current_price = db.get_service_price('pdf_summary')
+    
+    await query.edit_message_text(
+        f"📚 *تعديل سعر تلخيص الملازم*\n\nالسعر الحالي: {format_currency(current_price)}\n\nأرسل السعر الجديد:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return "UPDATE_SUMMARY_PRICE"
+
+async def process_update_summary_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تحديث سعر تلخيص الملازم"""
+    try:
+        new_price = int(update.message.text)
+        if new_price < 1000:
+            await update.message.reply_text("❌ السعر يجب أن يكون 1000 دينار على الأقل. أرسل سعراً جديداً:")
+            return "UPDATE_SUMMARY_PRICE"
+        
+        db.update_service_price('pdf_summary', new_price)
+        
+        await update.message.reply_text(
+            f"✅ تم تحديث سعر تلخيص الملازم إلى {format_currency(new_price)}",
+            reply_markup=get_admin_keyboard()
+        )
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إرسال سعر صحيح (أرقام فقط):")
+        return "UPDATE_SUMMARY_PRICE"
+
+async def admin_service_qna(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعديل سعر سؤال وجواب"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    current_price = db.get_service_price('qna')
+    
+    await query.edit_message_text(
+        f"❓ *تعديل سعر سؤال وجواب*\n\nالسعر الحالي: {format_currency(current_price)}\n\nأرسل السعر الجديد:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return "UPDATE_QNA_PRICE"
+
+async def process_update_qna_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تحديث سعر سؤال وجواب"""
+    try:
+        new_price = int(update.message.text)
+        if new_price < 1000:
+            await update.message.reply_text("❌ السعر يجب أن يكون 1000 دينار على الأقل. أرسل سعراً جديداً:")
+            return "UPDATE_QNA_PRICE"
+        
+        db.update_service_price('qna', new_price)
+        
+        await update.message.reply_text(
+            f"✅ تم تحديث سعر سؤال وجواب إلى {format_currency(new_price)}",
+            reply_markup=get_admin_keyboard()
+        )
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إرسال سعر صحيح (أرقام فقط):")
+        return "UPDATE_QNA_PRICE"
+
+async def admin_service_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تعديل سعر ساعدوني طالب"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    current_price = db.get_service_price('help_student')
+    
+    await query.edit_message_text(
+        f"👨‍🎓 *تعديل سعر ساعدوني طالب*\n\nالسعر الحالي: {format_currency(current_price)}\n\nأرسل السعر الجديد:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return "UPDATE_HELP_PRICE"
+
+async def process_update_help_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تحديث سعر ساعدوني طالب"""
+    try:
+        new_price = int(update.message.text)
+        if new_price < 1000:
+            await update.message.reply_text("❌ السعر يجب أن يكون 1000 دينار على الأقل. أرسل سعراً جديداً:")
+            return "UPDATE_HELP_PRICE"
+        
+        db.update_service_price('help_student', new_price)
+        
+        await update.message.reply_text(
+            f"✅ تم تحديث سعر ساعدوني طالب إلى {format_currency(new_price)}",
+            reply_markup=get_admin_keyboard()
+        )
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ يرجى إرسال سعر صحيح (أرقام فقط):")
+        return "UPDATE_HELP_PRICE"
+
+async def admin_manage_materials(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة المواد التعليمية"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    materials = db.get_study_materials(active_only=False)
+    
+    if not materials:
+        await query.edit_message_text("📭 لا توجد مواد تعليمية.")
+        return
+    
+    keyboard = []
+    
+    for material in materials:
+        status_icon = "✅" if material['is_active'] == 1 else "⏸️"
+        button_text = f"{status_icon} {material['title'][:30]}"
+        callback_data = f"manage_material_{material['material_id']}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+    
+    keyboard.append([
+        InlineKeyboardButton("➕ إضافة مادة", callback_data="admin_add_material"),
+        InlineKeyboardButton("🔙 رجوع", callback_data="admin_services")
+    ])
+    
+    await query.edit_message_text(
+        "📖 *إدارة المواد التعليمية*\n\nاختر المادة التي تريد إدارتها:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def manage_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إدارة مادة محددة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    material_id = int(query.data.replace("manage_material_", ""))
+    material = next((m for m in db.get_study_materials(active_only=False) if m['material_id'] == material_id), None)
+    
+    if not material:
+        await query.edit_message_text("❌ المادة غير موجودة.")
+        return
+    
+    status_text = "مفعلة" if material['is_active'] == 1 else "معطلة"
+    action_text = "تعطيل" if material['is_active'] == 1 else "تفعيل"
+    
+    keyboard = [
+        [InlineKeyboardButton(f"{action_text} المادة", callback_data=f"toggle_material_{material_id}_{0 if material['is_active'] == 1 else 1}")],
+        [InlineKeyboardButton("🗑️ حذف المادة", callback_data=f"delete_material_{material_id}")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_manage_materials")]
+    ]
+    
+    material_text = f"""
+    📖 *إدارة المادة: {material['title']}*
+    
+    📝 *الوصف:* {material['description']}
+    🎓 *المرحلة:* {material['stage']}
+    📊 *الحالة:* {status_text}
+    📅 *تاريخ الإضافة:* {format_date(material['added_at'])}
+    
+    *اختر الإجراء المطلوب:*
+    """
+    
+    await query.edit_message_text(
+        material_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def toggle_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تفعيل/تعطيل مادة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    data = query.data.replace("toggle_material_", "")
+    parts = data.split("_")
+    
+    if len(parts) >= 2:
+        material_id = int(parts[0])
+        new_status = int(parts[1])
+        
+        if db.toggle_study_material(material_id, new_status):
+            status_text = "مفعلة" if new_status == 1 else "معطلة"
+            await query.edit_message_text(
+                f"✅ تم {status_text} المادة بنجاح.",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await query.edit_message_text(
+                "❌ فشل في تحديث حالة المادة.",
+                reply_markup=get_admin_keyboard()
+            )
+
+async def delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف مادة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    material_id = int(query.data.replace("delete_material_", ""))
+    
+    if db.delete_study_material(material_id):
+        await query.edit_message_text(
+            f"✅ تم حذف المادة #{material_id} بنجاح.",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await query.edit_message_text(
+            f"❌ فشل في حذف المادة #{material_id}.",
+            reply_markup=get_admin_keyboard()
+        )
+
+async def admin_add_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إضافة مادة جديدة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(query.from_user.id):
+        return
+    
+    await query.edit_message_text(
+        "➕ *إضافة مادة جديدة*\n\nأرسل عنوان المادة:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return ADMIN_ADD_MATERIAL_TITLE
+
+async def process_material_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة عنوان المادة"""
+    context.user_data['material_title'] = update.message.text
+    await update.message.reply_text("✅ تم حفظ العنوان.\n\nأرسل وصف المادة:")
+    return ADMIN_ADD_MATERIAL_DESC
+
+async def process_material_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة وصف المادة"""
+    context.user_data['material_desc'] = update.message.text
+    await update.message.reply_text("✅ تم حفظ الوصف.\n\nأرسل المرحلة (مثل: الأول المتوسط, الثالث الثانوي):")
+    return ADMIN_ADD_MATERIAL_STAGE
+
+async def process_material_stage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة مرحلة المادة"""
+    context.user_data['material_stage'] = update.message.text
+    await update.message.reply_text("✅ تم حفظ المرحلة.\n\nأرسل ملف المادة:")
+    return ADMIN_ADD_MATERIAL_FILE
+
+async def process_material_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة ملف المادة"""
+    if not update.message.document:
+        await update.message.reply_text("❌ يرجى إرسال ملف. حاول مرة أخرى:")
+        return ADMIN_ADD_MATERIAL_FILE
+    
+    file_id = update.message.document.file_id
+    file_type = update.message.document.mime_type or 'application/octet-stream'
+    
+    title = context.user_data.get('material_title')
+    description = context.user_data.get('material_desc')
+    stage = context.user_data.get('material_stage')
+    user_id = update.effective_user.id
+    
+    material_id = db.add_study_material(title, description, stage, file_id, file_type, user_id)
+    
+    context.user_data.pop('material_title', None)
+    context.user_data.pop('material_desc', None)
+    context.user_data.pop('material_stage', None)
+    
+    await update.message.reply_text(
+        f"✅ تم إضافة المادة بنجاح (#{material_id})",
+        reply_markup=get_admin_keyboard()
+    )
+    
+    return ConversationHandler.END
 
 # ====================== الإحصائيات الكاملة ======================
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4480,11 +4930,10 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     📊 إجمالي المعاملات: {overall.get('total_transactions', 0):,}
     """
     
-    # إحصائيات الخدمات
     services_stats = finance_stats.get('services', [])
     if services_stats:
         stats_text += "\n*إحصائيات الخدمات:*"
-        for service in services_stats[:5]:  # عرض أول 5 خدمات
+        for service in services_stats[:5]:
             stats_text += f"\n• {service['service']}: {service['count']:,} عملية - {format_currency(service['total_amount'])}"
     
     keyboard = [
@@ -4565,12 +5014,10 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الإذاعة"""
     broadcast_text = update.message.text
     
-    # التحقق من النص
     if not broadcast_text or len(broadcast_text.strip()) < 5:
         await update.message.reply_text("❌ النص قصير جداً. يرجى إرسال نص أطول.")
         return ADMIN_BROADCAST
     
-    # الحصول على جميع المستخدمين
     users = db.get_all_users()
     total_users = len(users)
     
@@ -4582,7 +5029,6 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for user in users:
         try:
-            # تخطي المستخدمين المحظورين
             if user['is_banned']:
                 banned_count += 1
                 continue
@@ -4594,7 +5040,6 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             success_count += 1
             
-            # تأخير بسيط لتجنب حظر التليجرام
             await asyncio.sleep(0.05)
             
         except Exception as e:
@@ -4630,7 +5075,6 @@ async def admin_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(query.from_user.id):
         return
     
-    # الحصول على الإعدادات الحالية
     maintenance_mode = db.get_maintenance_mode()
     invite_reward = db.get_invite_reward()
     vip_price = db.get_vip_subscription_price()
@@ -4643,7 +5087,6 @@ async def admin_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"👑 تحديث سعر VIP ({format_currency(vip_price)})", 
          callback_data="admin_update_vip_price")],
         [InlineKeyboardButton("📊 عرض إحصائيات متقدمة", callback_data="admin_stats")],
-        [InlineKeyboardButton("🗑️ تنظيف قاعدة البيانات", callback_data="admin_cleanup_db")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
     ]
     
@@ -4709,7 +5152,6 @@ async def process_update_invite_reward(update: Update, context: ContextTypes.DEF
             await update.message.reply_text("❌ المكافأة يجب أن تكون صفر أو أكثر. أرسل مكافأة جديدة:")
             return ADMIN_UPDATE_INVITE_REWARD
         
-        # تحديث المكافأة
         db.set_invite_reward(new_reward)
         
         await update.message.reply_text(
@@ -4721,26 +5163,6 @@ async def process_update_invite_reward(update: Update, context: ContextTypes.DEF
     except ValueError:
         await update.message.reply_text("❌ يرجى إرسال مكافأة صحيحة (أرقام فقط):")
         return ADMIN_UPDATE_INVITE_REWARD
-
-async def admin_cleanup_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تنظيف قاعدة البيانات"""
-    query = update.callback_query
-    await query.answer()
-    
-    if not is_admin(query.from_user.id):
-        return
-    
-    keyboard = [
-        [InlineKeyboardButton("🗑️ تنظيف المحادثات القديمة", callback_data="cleanup_old_conversations")],
-        [InlineKeyboardButton("📊 إعادة تعيين الإحصائيات", callback_data="reset_stats")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_settings")]
-    ]
-    
-    await query.edit_message_text(
-        "🗑️ *تنظيف قاعدة البيانات*\n\nاختر نوع التنظيف الذي تريد إجراؤه:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
 
 # ====================== معالجات إضافية ======================
 async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4762,7 +5184,7 @@ def main():
     """الدالة الرئيسية لتشغيل البوت"""
     
     print("=" * 60)
-    print("🚀 بدء تشغيل بوت 'يلا نتعلم' - الإصدار النهائي")
+    print("🚀 بدء تشغيل بوت 'يلا نتعلم' - الإصدار النهائي (مصحح)")
     print("=" * 60)
     print(f"🔑 توكن البوت: {BOT_TOKEN[:15]}...")
     print(f"👤 المطور: @Allawi04")
@@ -4772,7 +5194,6 @@ def main():
     print(f"📢 قناة البوت: {CHANNEL_USERNAME}")
     print("=" * 60)
     
-    # حذف Webhook السابق لمنع التعارض
     try:
         import telegram
         bot = telegram.Bot(token=BOT_TOKEN)
@@ -4781,12 +5202,10 @@ def main():
     except Exception as e:
         print(f"⚠️  لم يتمكن من حذف Webhook: {e}")
     
-    # إنشاء تطبيق البوت
     application = Application.builder().token(BOT_TOKEN).build()
     
     # ========== معالجات المحادثة الرئيسية ==========
     
-    # معالج المحادثة لحساب الإعفاء
     exemption_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(service_exemption, pattern='^service_exemption$')],
         states={
@@ -4797,7 +5216,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالج المحادثة لتلخيص PDF
     pdf_summary_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(service_summary, pattern='^service_summary$')],
         states={
@@ -4806,7 +5224,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالج المحادثة لسؤال وجواب
     qna_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(service_qna, pattern='^service_qna$')],
         states={
@@ -4815,7 +5232,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالج المحادثة لساعدوني طالب
     help_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(service_help, pattern='^service_help$')],
         states={
@@ -4824,7 +5240,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالج المحادثة لرفع محاضرة VIP
     vip_upload_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(vip_upload_lecture, pattern='^vip_upload_lecture$')],
         states={
@@ -4838,7 +5253,6 @@ def main():
     
     # ========== معالجات لوحة التحكم ==========
     
-    # معالجات الشحن والخصم
     charge_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_charge, pattern='^admin_charge$')],
         states={
@@ -4866,7 +5280,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالجات حظر وفك حظر المستخدمين
     ban_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_ban_user, pattern='^admin_ban_user$')],
         states={
@@ -4883,7 +5296,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالجات البحث والترقية
     search_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_search_user, pattern='^admin_search_user$')],
         states={
@@ -4900,7 +5312,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالج الإذاعة
     broadcast_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_broadcast, pattern='^admin_broadcast$')],
         states={
@@ -4909,7 +5320,6 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
     
-    # معالجات تحديث الأسعار
     update_vip_price_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_update_vip_price, pattern='^admin_update_vip_price$')],
         states={
@@ -4930,6 +5340,57 @@ def main():
         entry_points=[CallbackQueryHandler(admin_service_exemption, pattern='^admin_service_exemption$')],
         states={
             "UPDATE_EXEMPTION_PRICE": [MessageHandler(filters.TEXT & ~filters.COMMAND, process_update_exemption_price)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)]
+    )
+    
+    update_summary_price_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_service_summary, pattern='^admin_service_summary$')],
+        states={
+            "UPDATE_SUMMARY_PRICE": [MessageHandler(filters.TEXT & ~filters.COMMAND, process_update_summary_price)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)]
+    )
+    
+    update_qna_price_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_service_qna, pattern='^admin_service_qna$')],
+        states={
+            "UPDATE_QNA_PRICE": [MessageHandler(filters.TEXT & ~filters.COMMAND, process_update_qna_price)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)]
+    )
+    
+    update_help_price_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_service_help, pattern='^admin_service_help$')],
+        states={
+            "UPDATE_HELP_PRICE": [MessageHandler(filters.TEXT & ~filters.COMMAND, process_update_help_price)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)]
+    )
+    
+    add_material_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_add_material, pattern='^admin_add_material$')],
+        states={
+            ADMIN_ADD_MATERIAL_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_material_title)],
+            ADMIN_ADD_MATERIAL_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_material_desc)],
+            ADMIN_ADD_MATERIAL_STAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_material_stage)],
+            ADMIN_ADD_MATERIAL_FILE: [MessageHandler(filters.Document.ALL, process_material_file)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)]
+    )
+    
+    cancel_vip_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_cancel_vip, pattern='^admin_cancel_vip$')],
+        states={
+            "CANCEL_VIP": [MessageHandler(filters.TEXT & ~filters.COMMAND, process_cancel_vip)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)]
+    )
+    
+    renew_vip_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_renew_vip, pattern='^admin_renew_vip$')],
+        states={
+            "RENEW_VIP": [MessageHandler(filters.TEXT & ~filters.COMMAND, process_renew_vip)],
         },
         fallbacks=[CommandHandler('cancel', cancel_conversation)]
     )
@@ -4960,6 +5421,12 @@ def main():
     application.add_handler(update_vip_price_conv_handler)
     application.add_handler(update_invite_reward_conv_handler)
     application.add_handler(update_exemption_price_conv_handler)
+    application.add_handler(update_summary_price_conv_handler)
+    application.add_handler(update_qna_price_conv_handler)
+    application.add_handler(update_help_price_conv_handler)
+    application.add_handler(add_material_conv_handler)
+    application.add_handler(cancel_vip_conv_handler)
+    application.add_handler(renew_vip_conv_handler)
     
     # ========== معالجات الكاليد باك ==========
     
@@ -4970,6 +5437,7 @@ def main():
     application.add_handler(CallbackQueryHandler(confirm_vip_subscription, pattern='^confirm_vip_subscription$'))
     application.add_handler(CallbackQueryHandler(vip_my_lectures, pattern='^vip_my_lectures$'))
     application.add_handler(CallbackQueryHandler(vip_my_earnings, pattern='^vip_my_earnings$'))
+    application.add_handler(CallbackQueryHandler(download_lecture, pattern='^download_lecture_'))
     
     # أزرار المساعدة
     application.add_handler(CallbackQueryHandler(invite_friend, pattern='^invite_friend$'))
@@ -4984,10 +5452,18 @@ def main():
     application.add_handler(CallbackQueryHandler(navigate_lectures, pattern='^(lecture_prev|lecture_next)$'))
     application.add_handler(CallbackQueryHandler(buy_lecture, pattern='^buy_lecture_'))
     application.add_handler(CallbackQueryHandler(navigate_pending_lectures, pattern='^(pending_lecture_prev|pending_lecture_next)$'))
+    application.add_handler(CallbackQueryHandler(navigate_questions, pattern='^(question_prev|question_next)$'))
     
     # معالجات الموافقة
     application.add_handler(CallbackQueryHandler(admin_approve_lecture, pattern='^admin_approve_lecture_'))
     application.add_handler(CallbackQueryHandler(admin_reject_lecture, pattern='^admin_reject_lecture_'))
+    application.add_handler(CallbackQueryHandler(admin_approve_question, pattern='^admin_approve_question_'))
+    application.add_handler(CallbackQueryHandler(admin_reject_question, pattern='^admin_reject_question_'))
+    
+    # معالجات إدارة المواد
+    application.add_handler(CallbackQueryHandler(manage_material, pattern='^manage_material_'))
+    application.add_handler(CallbackQueryHandler(toggle_material, pattern='^toggle_material_'))
+    application.add_handler(CallbackQueryHandler(delete_material, pattern='^delete_material_'))
     
     # معالجات لوحة التحكم
     application.add_handler(CallbackQueryHandler(admin_panel, pattern='^admin_panel$'))
@@ -5010,7 +5486,8 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_daily_stats, pattern='^admin_daily_stats$'))
     application.add_handler(CallbackQueryHandler(admin_settings, pattern='^admin_settings$'))
     application.add_handler(CallbackQueryHandler(toggle_maintenance, pattern='^toggle_maintenance$'))
-    application.add_handler(CallbackQueryHandler(admin_cleanup_db, pattern='^admin_cleanup_db$'))
+    application.add_handler(CallbackQueryHandler(admin_manage_questions, pattern='^admin_manage_questions$'))
+    application.add_handler(CallbackQueryHandler(admin_manage_materials, pattern='^admin_manage_materials$'))
     
     # الزر الرئيسي
     application.add_handler(CallbackQueryHandler(start_command, pattern='^start$'))
@@ -5041,7 +5518,7 @@ def main():
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
-            poll_interval=1.0
+            poll_interval=0.5
         )
     except KeyboardInterrupt:
         print("\n🛑 تم إيقاف البوت.")
@@ -5050,14 +5527,11 @@ def main():
         logger.error(f"خطأ في التشغيل: {e}")
 
 if __name__ == '__main__':
-    # إنشاء دليل للخطوط إذا لم يكن موجوداً
     os.makedirs('fonts', exist_ok=True)
     
-    # التحقق من المكتبات
     if not PDF_SUPPORT:
         print("⚠️  تحذير: مكتبات PDF غير مثبتة. سيتم تعطيل ميزة تلخيص PDF.")
         print("📦 قم بتثبيت المكتبات المطلوبة:")
-        print("   pip install reportlab arabic-reshaper python-bidi Pillow PyPDF2")
+        print("   pip install reportlab arabic-reshaper python-bidi Pillow pypdf")
     
-    # تشغيل البوت
     main()
