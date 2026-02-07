@@ -78,7 +78,7 @@ def http_request(url: str, method: str = "GET", headers: Dict = None,
 TOKEN = "8279341291:AAGet-xHKrmSg1RuBYaaNuzmaqv1LgwUM6E"
 BOT_USERNAME = "@FC4Xbot"
 ADMIN_ID = 6130994941
-SUPPORT_USER = "Allawi04@"
+SUPPORT_USER = "@Allawi04"
 CHANNEL_USERNAME = "FCJCV"
 GEMINI_API_KEY = "AIzaSyARsl_YMXA74bPQpJduu0jJVuaku7MaHuY"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
