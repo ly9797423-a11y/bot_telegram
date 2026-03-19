@@ -1262,6 +1262,7 @@ class Keyboards:
         ]
         if str(user_id) == str(ADMIN_ID):
             buttons.append(InlineKeyboardButton("⚙️ لوحة التحكم", callback_data="admin_main"))
+            buttons.append(InlineKeyboardButton("📊 الاحصائيات", callback_data="menu_stats"))
         keyboard.add(*buttons)
         return keyboard
     
@@ -1378,7 +1379,6 @@ class Keyboards:
             InlineKeyboardButton("🎁 الهدية اليومية", callback_data="daily_gift"),
             InlineKeyboardButton("👥 احالاتي", callback_data="my_referrals"),
             InlineKeyboardButton("📊 ارباحي", callback_data="my_earnings"),
-            InlineKeyboardButton("🏆 المتصدرين", callback_data="top_referrers"),
             InlineKeyboardButton("🔙 رجوع", callback_data="back_main")
         )
         return keyboard
@@ -1658,12 +1658,25 @@ def handle_start(message):
             parts = args[1].split('_')
             if len(parts) >= 3:
                 referrer_id = parts[1]
+
+        # التحقق اذا كان المستخدم جديد
+        existing_user = db.get_user(user_id)
+        is_new_user = existing_user is None
+        
+        # فقط المستخدمين الجدد يحصلون على نقاط للمحيل
+        if is_new_user and referrer_id != str(user_id):
+            referrer = db.get_user(referrer_id)
+            if referrer and not referrer.get("is_banned", False):
+                points = db.get_settings()["referral_points"]
+                db.update_points(referrer_id, points, "add", "مكافأة دعوة")
+                db.add_referral(referrer_id, user_id)
                 if referrer_id != str(user_id):
                     referrer = db.get_user(referrer_id)
                     if referrer and not referrer.get("is_banned", False):
                         points = db.get_settings()["referral_points"]
                         db.update_points(referrer_id, points, "add", "مكافأة دعوة")
                         db.add_referral(referrer_id, user_id)
+                        
                         try:
                             bot.send_message(
                                 referrer_id,
@@ -1698,12 +1711,12 @@ def handle_start(message):
         settings = db.get_settings()
         welcome = f"""
 🌹 {settings['bot_name']} 🌹
-━━━━━━━━━━━━━━━━━━
+
 👤 مرحباً بك {first_name}
 🆔 <code>{user_id}</code>
 💰 رصيدك: {user['points']} {settings['currency_name']}
 📊 طلباتك: {user.get('total_orders', 0)}
-━━━━━━━━━━━━━━━━━━
+
 
 {settings['welcome_message']}
 اختر من القائمة:
@@ -2207,14 +2220,8 @@ def handle_callbacks(call):
 
 📞 الدعم الفني: {support}
 
-💵 اسعار الشحن:
-• 100 {settings['currency_name']} = 1$
-• 500 {settings['currency_name']} = 4$
-• 1000 {settings['currency_name']} = 7$
-• 5000 {settings['currency_name']} = 30$
-
 ⚠️ الدفع متوفر عبر جميع وسائل الدفع
-━━━━━━━━━━━━━━━━━━
+
             """
             keyboard = InlineKeyboardMarkup()
             keyboard.add(InlineKeyboardButton("📞 التواصل", url=f"https://t.me/{support.replace('@','')}"))
