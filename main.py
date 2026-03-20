@@ -1257,7 +1257,6 @@ class Keyboards:
             InlineKeyboardButton("👤 ملفي الشخصي", callback_data="menu_profile"),
             InlineKeyboardButton("📞 الدعم الفني", callback_data="menu_support"),
             InlineKeyboardButton("ℹ️ عن البوت", callback_data="menu_about"),
-            InlineKeyboardButton("📊 الاحصائيات", callback_data="menu_stats"),
             InlineKeyboardButton("🎁 العروض", callback_data="menu_offers")
         ]
         if str(user_id) == str(ADMIN_ID):
