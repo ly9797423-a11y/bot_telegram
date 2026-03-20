@@ -1645,7 +1645,7 @@ utils = Utils()
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    """معالج امر البدء - نقطة الدخول الرئيسية"""
+    """معالج امر البدء"""
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
@@ -1654,38 +1654,34 @@ def handle_start(message):
     try:
         # التحقق من رابط الدعوة
         args = message.text.split()
+        referrer_id = None  # ✅ تعريف المتغير
+        
         if len(args) > 1 and args[1].startswith("ref_"):
             parts = args[1].split('_')
             if len(parts) >= 3:
                 referrer_id = parts[1]
-
+        
         # التحقق اذا كان المستخدم جديد
         existing_user = db.get_user(user_id)
         is_new_user = existing_user is None
         
         # فقط المستخدمين الجدد يحصلون على نقاط للمحيل
-        if is_new_user and referrer_id != str(user_id):
+        if is_new_user and referrer_id and referrer_id != str(user_id):
             referrer = db.get_user(referrer_id)
             if referrer and not referrer.get("is_banned", False):
                 points = db.get_settings()["referral_points"]
                 db.update_points(referrer_id, points, "add", "مكافأة دعوة")
                 db.add_referral(referrer_id, user_id)
-                if referrer_id != str(user_id):
-                    referrer = db.get_user(referrer_id)
-                    if referrer and not referrer.get("is_banned", False):
-                        points = db.get_settings()["referral_points"]
-                        db.update_points(referrer_id, points, "add", "مكافأة دعوة")
-                        db.add_referral(referrer_id, user_id)
-                        
-                        try:
-                            bot.send_message(
-                                referrer_id,
-                                f"🎉 تم تسجيل مستخدم جديد عبر رابطك!\n"
-                                f"👤 المستخدم: {first_name}\n"
-                                f"💰 تم اضافة {points} نقطة"
-                            )
-                        except:
-                            pass
+                
+                try:
+                    bot.send_message(
+                        referrer_id,
+                        f"🎉 تم تسجيل مستخدم جديد عبر رابطك!\n"
+                        f"👤 المستخدم: {first_name}\n"
+                        f"💰 تم اضافة {points} نقطة"
+                    )
+                except:
+                    pass
         
         # اضافة المستخدم
         db.add_user(user_id, username, first_name, last_name)
