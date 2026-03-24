@@ -1881,7 +1881,7 @@ def handle_about_command(message):
 • دعم فني 24/7
 
 👤 المطور: {ADMIN_USERNAME}
-📅 الاصدار: 12.0
+📅 الاصدار: 12.1
 ━━━━━━━━━━━━━━━━━━
     """
     bot.reply_to(message, text)
@@ -1952,35 +1952,6 @@ def handle_check_sub(call):
             show_alert=True
         )
 
-# ========== معالج زر التحقق ==========
-@bot.callback_query_handler(func=lambda call: call.data == "check_now")
-def handle_check_sub(call):
-    """معالج زر التحقق من الاشتراك"""
-    user_id = call.from_user.id
-    
-    if must_subscribe(user_id):
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        
-        fake_message = telebot.types.Message(
-            message_id=call.message.message_id,
-            from_user=call.from_user,
-            date=call.message.date,
-            chat=call.message.chat,
-            content_type="text",
-            options={},
-            json_string=""
-        )
-        fake_message.text = "/start"
-        handle_start(fake_message)
-        
-        bot.answer_callback_query(call.id, "✅ تم التحقق بنجاح")
-    else:
-        bot.answer_callback_query(
-            call.id, 
-            "❌ لم تشترك في القناة بعد!\nالرجاء الاشتراك ثم اضغط تحقق",
-            show_alert=True
-        )
-
 # ========== الجزء 7: معالج الازرار الرئيسي (5000 سطر) ==========
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -2012,7 +1983,7 @@ def handle_callbacks(call):
             return
         
         # التحقق من وضع الصيانة
-        if db.get_settings()["maintenance_mode"] and str(user_id) != str(ADMIN_ID) and not data.startswith("admin_"):
+        if db.get_settings().get("maintenance_mode", False) and str(user_id) != str(ADMIN_ID) and not data.startswith("admin_"):
             bot.answer_callback_query(call.id, "🔧 البوت في وضع الصيانة", show_alert=True)
             return
         
