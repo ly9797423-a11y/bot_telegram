@@ -1664,6 +1664,21 @@ def handle_start(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
+
+     # ========== أضف هذا اول شي ==========
+    if not must_subscribe(user_id):
+        channels = db.get_required_channels()
+        keyboard = InlineKeyboardMarkup()
+        for ch in channels:
+            keyboard.add(InlineKeyboardButton("📢 اشترك", url=ch["link"]))
+        keyboard.add(InlineKeyboardButton("✅ تحقق", callback_data="check_now"))
+        bot.reply_to(
+            message,
+            "🔒 يجب الاشتراك بالقناة اولاً:",
+            reply_markup=keyboard
+        )
+        return
+    # ========== انتهى ==========
     
     try:
         # التحقق من رابط الدعوة
