@@ -202,6 +202,15 @@ logger = logging.getLogger(__name__)
 # ========== انشاء البوت ==========
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
+# ========== دالة امنة لجلب المستخدم ==========
+def get_user_safe(user_id):
+    """تأكد من وجود المستخدم قبل استخدامه"""
+    user = db.get_user(user_id)
+    if not user:
+        db.add_user(user_id, "", "مستخدم")
+        user = db.get_user(user_id)
+    return user
+
 # ========== ضع الدالة هنا ==========
 def must_subscribe(user_id):
     """تتحقق اذا كان المستخدم لازم يشترك"""
