@@ -1964,6 +1964,7 @@ def handle_check_sub(call):
 # ========== الجزء 7: معالج الازرار الرئيسي (5000 سطر) ==========
 
 @bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
 def handle_callbacks(call):
     """معالج جميع الازرار - اكثر من 150 زر مختلف"""
     user_id = call.from_user.id
