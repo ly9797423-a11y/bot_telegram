@@ -202,6 +202,21 @@ logger = logging.getLogger(__name__)
 # ========== انشاء البوت ==========
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
+# ========== ضع الدالة هنا ==========
+def must_subscribe(user_id):
+    """تتحقق اذا كان المستخدم لازم يشترك"""
+    channels = db.get_required_channels()
+    if not channels:
+        return True
+    try:
+        for ch in channels:
+            status = bot.get_chat_member(ch["link"], user_id).status
+            if status in ['left', 'kicked']:
+                return False
+        return True
+    except:
+        return False
+
 # ========== قواميس الحالات ==========
 user_states = {}
 admin_states = {}
