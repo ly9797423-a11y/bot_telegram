@@ -1923,6 +1923,35 @@ def handle_admin_command(message):
     else:
         bot.reply_to(message, "❌ هذا الامر للمشرفين فقط")
 
+# ========== معالج زر التحقق ==========
+@bot.callback_query_handler(func=lambda call: call.data == "check_now")
+def handle_check_sub(call):
+    """معالج زر التحقق من الاشتراك"""
+    user_id = call.from_user.id
+    
+    if must_subscribe(user_id):
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        
+        fake_message = telebot.types.Message(
+            message_id=call.message.message_id,
+            from_user=call.from_user,
+            date=call.message.date,
+            chat=call.message.chat,
+            content_type="text",
+            options={},
+            json_string=""
+        )
+        fake_message.text = "/start"
+        handle_start(fake_message)
+        
+        bot.answer_callback_query(call.id, "✅ تم التحقق بنجاح")
+    else:
+        bot.answer_callback_query(
+            call.id, 
+            "❌ لم تشترك في القناة بعد!\nالرجاء الاشتراك ثم اضغط تحقق",
+            show_alert=True
+        )
+
 # ========== الجزء 7: معالج الازرار الرئيسي (5000 سطر) ==========
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -1930,7 +1959,23 @@ def handle_callbacks(call):
     """معالج جميع الازرار - اكثر من 150 زر مختلف"""
     user_id = call.from_user.id
     data = call.data
-    
+
+       try:
+        # التحقق من الاشتراك الاجباري (الجزء الجديد)
+        if not must_subscribe(user_id):
+            channels = db.get_required_channels()
+            keyboard = InlineKeyboardMarkup()
+            for ch in channels:
+                keyboard.add(InlineKeyboardButton("📢 اشترك", url=ch["link"]))
+            keyboard.add(InlineKeyboardButton("✅ تحقق", callback_data="check_now"))
+            bot.edit_message_text(
+                "🔒 يجب الاشتراك بالقناة اولاً:",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=keyboard
+            )
+            return
+
     try:
         # التحقق من الحظر
         user = db.get_user(user_id)
