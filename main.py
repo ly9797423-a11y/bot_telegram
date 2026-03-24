@@ -1923,7 +1923,7 @@ def handle_admin_command(message):
     else:
         bot.reply_to(message, "❌ هذا الامر للمشرفين فقط")
 
-        # ========== معالج زر التحقق ==========
+# ========== معالج زر التحقق ==========
 @bot.callback_query_handler(func=lambda call: call.data == "check_now")
 def handle_check_sub(call):
     """معالج زر التحقق من الاشتراك"""
