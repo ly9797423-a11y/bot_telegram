@@ -4472,7 +4472,7 @@ def main():
     """الدالة الرئيسية لتشغيل البوت"""
     
     print("="*60)
-    print("🚀 بوت تمويل الورد - النسخة النهائية 12.0")
+    print(" بوت تمويل الورد - النسخة النهائية 130")
     print(f"📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python: {platform.python_version()}")
     print(f"📁 المسار: {os.getcwd()}")
