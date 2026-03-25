@@ -204,28 +204,34 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # ========== دالة التحقق من الاشتراك ==========
 def check_sub(user_id):
-    """التحقق من اشتراك المستخدم"""
+    """التحقق من اشتراك المستخدم في القنوات المطلوبة"""
     channels = db.get_required_channels()
     if not channels:
         return True
     
     for ch in channels:
         try:
-            # استخراج معرف القناة
             link = ch["link"]
+            
+            # استخراج معرف القناة من الرابط
             if "t.me/" in link:
-                channel = link.split("t.me/")[-1].replace("@", "")
+                channel_name = link.split("t.me/")[-1]
             else:
-                channel = link.replace("@", "")
+                channel_name = link
+            
+            # تأكد من وجود @
+            if not channel_name.startswith("@"):
+                channel_name = "@" + channel_name
             
             # التحقق من اشتراك المستخدم
-            member = bot.get_chat_member(f"@{channel}", user_id)
+            member = bot.get_chat_member(channel_name, user_id)
+            
+            # اذا كان العضو غير مشترك
             if member.status in ['left', 'kicked']:
                 return False
                 
         except Exception as e:
-            # اذا صار خطأ، اعتبر المستخدم غير مشترك (عشان يطلب اشتراك)
-            print(f"⚠️ خطأ: {e}")
+            print(f"خطأ في التحقق من {link}: {e}")
             return False
     
     return True
