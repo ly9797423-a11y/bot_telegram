@@ -202,6 +202,39 @@ logger = logging.getLogger(__name__)
 # ========== انشاء البوت ==========
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
+# ========== دالة التحقق من الاشتراك ==========
+def check_sub(user_id):
+    channels = db.get_required_channels()
+    if not channels:
+        return True
+    for ch in channels:
+        try:
+            link = ch["link"]
+            if "t.me/" in link:
+                channel = link.split("t.me/")[-1]
+            else:
+                channel = link.replace("@", "")
+            member = bot.get_chat_member(f"@{channel}", user_id)
+            if member.status in ['left', 'kicked']:
+                return False
+        except:
+            return False
+    return True
+
+def get_channel_status(user_id, channel_link):
+    try:
+        if "t.me/" in channel_link:
+            channel = channel_link.split("t.me/")[-1]
+        else:
+            channel = channel_link.replace("@", "")
+        member = bot.get_chat_member(f"@{channel}", user_id)
+        if member.status in ['member', 'creator', 'administrator']:
+            return "✅ مشترك"
+        else:
+            return "❌ غير مشترك"
+    except:
+        return "❌ غير مشترك"
+
 # ========== قواميس الحالات ==========
 user_states = {}
 admin_states = {}
@@ -1649,7 +1682,37 @@ def handle_start(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
-    
+
+    # ========== التحقق من الاشتراك ==========
+    if not check_sub(user_id):
+        channels = db.get_required_channels()
+        text = "عذراً، يجب الاشتراك في قنوات البوت أولاً\n\n"
+        for ch in channels:
+            status = get_channel_status(user_id, ch["link"])
+            if "t.me/" in ch["link"]:
+                name = ch["link"].split("t.me/")[-1]
+            else:
+                name = ch["link"].replace("@", "")
+            text += f"{name}\n{status}\n\n"
+        
+        keyboard = InlineKeyboardMarkup()
+        for ch in channels:
+            link = ch["link"]
+            if not link.startswith("http"):
+                if link.startswith("@"):
+                    link = "https://t.me/" + link[1:]
+                else:
+                    link = "https://t.me/" + link
+            if "t.me/" in ch["link"]:
+                name = ch["link"].split("t.me/")[-1]
+            else:
+                name = ch["link"].replace("@", "")
+            keyboard.add(InlineKeyboardButton(f"📢 {name}", url=link))
+        keyboard.add(InlineKeyboardButton("🔄 تحقق", callback_data="check_now"))
+        
+        bot.reply_to(message, text, reply_markup=keyboard)
+        return
+ 
     try:
         # التحقق من رابط الدعوة
         args = message.text.split()
@@ -1893,8 +1956,39 @@ def handle_admin_command(message):
     else:
         bot.reply_to(message, "❌ هذا الامر للمشرفين فقط")
 
-# ========== الجزء 7: معالج الازرار الرئيسي (5000 سطر) ==========
+# ========== معالج زر التحقق ==========
+@bot.callback_query_handler(func=lambda call: call.data == "check_now")
+def handle_check(call):
+    user_id = call.from_user.id
+    channels = db.get_required_channels()
+    
+    text = "عذراً، يجب الاشتراك في قنوات البوت أولاً\n\n"
+    for ch in channels:
+        status = get_channel_status(user_id, ch["link"])
+        if "t.me/" in ch["link"]:
+            name = ch["link"].split("t.me/")[-1]
+        else:
+            name = ch["link"].replace("@", "")
+        text += f"{name}\n{status}\n\n"
+    
+    keyboard = InlineKeyboardMarkup()
+    for ch in channels:
+        link = ch["link"]
+        if not link.startswith("http"):
+            if link.startswith("@"):
+                link = "https://t.me/" + link[1:]
+            else:
+                link = "https://t.me/" + link
+        if "t.me/" in ch["link"]:
+            name = ch["link"].split("t.me/")[-1]
+        else:
+            name = ch["link"].replace("@", "")
+        keyboard.add(InlineKeyboardButton(f"📢 {name}", url=link))
+    keyboard.add(InlineKeyboardButton("🔄 تحقق مرة اخرى", callback_data="check_now"))
+    
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
 
+# ========== الجزء 7: معالج الازرار الرئيسي (5000 سطر) ==========
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     """معالج جميع الازرار - اكثر من 150 زر مختلف"""
