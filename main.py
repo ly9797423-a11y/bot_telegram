@@ -202,6 +202,21 @@ logger = logging.getLogger(__name__)
 # ========== انشاء البوت ==========
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
+# ========== دالة التحقق من الاشتراك ==========
+def check_sub(user_id):
+    """تتأكد اذا المستخدم مشترك بالقنوات المطلوبة"""
+    channels = db.get_required_channels()
+    if not channels:
+        return True
+    try:
+        for ch in channels:
+            status = bot.get_chat_member(ch["link"], user_id).status
+            if status in ['left', 'kicked']:
+                return False
+        return True
+    except:
+        return False
+
 # ========== قواميس الحالات ==========
 user_states = {}
 admin_states = {}
@@ -1649,6 +1664,20 @@ def handle_start(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
+
+    # ========== أضف هذا الجزء اول شي ==========
+    if not check_sub(user_id):
+        channels = db.get_required_channels()
+        keyboard = InlineKeyboardMarkup()
+        for ch in channels:
+            keyboard.add(InlineKeyboardButton("📢 اشترك", url=ch["link"]))
+        keyboard.add(InlineKeyboardButton("✅ تحقق", callback_data="check_now"))
+        bot.reply_to(
+            message,
+            "🔒 يجب الاشتراك بالقناة اولاً:",
+            reply_markup=keyboard
+        )
+        return
     
     try:
         # التحقق من رابط الدعوة
@@ -1892,6 +1921,28 @@ def handle_admin_command(message):
         bot.reply_to(message, text, reply_markup=Keyboards.admin_main_menu())
     else:
         bot.reply_to(message, "❌ هذا الامر للمشرفين فقط")
+
+# ========== معالج زر التحقق ==========
+@bot.callback_query_handler(func=lambda call: call.data == "check_now")
+def handle_check_sub(call):
+    user_id = call.from_user.id
+    
+    if check_sub(user_id):
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        fake_message = telebot.types.Message(
+            message_id=call.message.message_id,
+            from_user=call.from_user,
+            date=call.message.date,
+            chat=call.message.chat,
+            content_type="text",
+            options={},
+            json_string=""
+        )
+        fake_message.text = "/start"
+        handle_start(fake_message)
+        bot.answer_callback_query(call.id, "✅ تم التحقق")
+    else:
+        bot.answer_callback_query(call.id, "❌ لم تشترك بعد!", show_alert=True)
 
 # ========== الجزء 7: معالج الازرار الرئيسي (5000 سطر) ==========
 
