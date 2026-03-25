@@ -204,31 +204,32 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # ========== دالة التحقق من الاشتراك ==========
 def check_sub(user_id):
-    """تتأكد اذا المستخدم مشترك بالقنوات المطلوبة"""
+    """التحقق من اشتراك المستخدم"""
     channels = db.get_required_channels()
     if not channels:
         return True
     
     for ch in channels:
         try:
-            # استخرج اسم القناة من الرابط
             link = ch["link"]
+            
+            # استخرج اسم القناة
             if "t.me/" in link:
-                channel_id = link.split("t.me/")[-1]
+                channel_name = link.split("t.me/")[-1]
             else:
-                channel_id = link.replace("@", "")
+                channel_name = link.replace("@", "")
             
             # تأكد من وجود @
-            if not channel_id.startswith("@"):
-                channel_id = "@" + channel_id
+            if not channel_name.startswith("@"):
+                channel_name = "@" + channel_name
             
             # تحقق من اشتراك المستخدم
-            member = bot.get_chat_member(channel_id, user_id)
+            member = bot.get_chat_member(channel_name, user_id)
             if member.status in ['left', 'kicked']:
                 return False
                 
         except Exception as e:
-            print(f"خطأ في التحقق من {link}: {e}")
+            print(f"خطأ: {e}")
             return False
     
     return True
@@ -1682,12 +1683,12 @@ def handle_start(message):
     last_name = message.from_user.last_name
 
     # ========== أضف هذا الجزء اول شي ==========
-   if not check_sub(user_id):
+  if not check_sub(user_id):
     channels = db.get_required_channels()
     keyboard = InlineKeyboardMarkup()
     for ch in channels:
         link = ch["link"]
-        # حول الرابط لصيغة صالحة
+        # حول الرابط لصيغة صالحة للزر
         if not link.startswith("http"):
             if link.startswith("@"):
                 link = "https://t.me/" + link[1:]
