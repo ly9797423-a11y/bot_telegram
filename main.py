@@ -204,43 +204,32 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # ========== دالة التحقق من الاشتراك ==========
 def check_sub(user_id):
-    """التحقق من اشتراك المستخدم"""
+    """تتأكد اذا المستخدم مشترك بالقنوات المطلوبة"""
     channels = db.get_required_channels()
-    print(f"📢 عدد القنوات: {len(channels)}")  # للفحص
-    
     if not channels:
-        print("❌ لا توجد قنوات")
         return True
     
     for ch in channels:
         try:
+            # استخرج اسم القناة من الرابط
             link = ch["link"]
-            print(f"🔍 جاري فحص القناة: {link}")
-            
-            # استخراج معرف القناة
             if "t.me/" in link:
-                channel_name = link.split("t.me/")[-1]
+                channel_id = link.split("t.me/")[-1]
             else:
-                channel_name = link
+                channel_id = link.replace("@", "")
             
-            if not channel_name.startswith("@"):
-                channel_name = "@" + channel_name
+            # تأكد من وجود @
+            if not channel_id.startswith("@"):
+                channel_id = "@" + channel_id
             
-            print(f"📌 اسم القناة: {channel_name}")
-            
-            # التحقق من اشتراك المستخدم
-            member = bot.get_chat_member(channel_name, user_id)
-            print(f"👤 حالة المستخدم: {member.status}")
-            
+            # تحقق من اشتراك المستخدم
+            member = bot.get_chat_member(channel_id, user_id)
             if member.status in ['left', 'kicked']:
-                print("❌ غير مشترك")
                 return False
-            else:
-                print("✅ مشترك")
                 
         except Exception as e:
-            print(f"💥 خطأ: {e}")
-            return False  # خليها ترجع False عشان يطلب اشتراك
+            print(f"خطأ في التحقق من {link}: {e}")
+            return False
     
     return True
 
@@ -1693,18 +1682,25 @@ def handle_start(message):
     last_name = message.from_user.last_name
 
     # ========== أضف هذا الجزء اول شي ==========
-    if not check_sub(user_id):
-        channels = db.get_required_channels()
-        keyboard = InlineKeyboardMarkup()
-        for ch in channels:
-            keyboard.add(InlineKeyboardButton("📢 اشترك", url=ch["link"]))
-        keyboard.add(InlineKeyboardButton("✅ تحقق", callback_data="check_now"))
-        bot.reply_to(
-            message,
-            "🔒 يجب الاشتراك بالقناة اولاً:",
-            reply_markup=keyboard
-        )
-        return
+   if not check_sub(user_id):
+    channels = db.get_required_channels()
+    keyboard = InlineKeyboardMarkup()
+    for ch in channels:
+        link = ch["link"]
+        # حول الرابط لصيغة صالحة
+        if not link.startswith("http"):
+            if link.startswith("@"):
+                link = "https://t.me/" + link[1:]
+            else:
+                link = "https://t.me/" + link
+        keyboard.add(InlineKeyboardButton("📢 اشترك", url=link))
+    keyboard.add(InlineKeyboardButton("✅ تحقق", callback_data="check_now"))
+    bot.reply_to(
+        message,
+        "🔒 يجب الاشتراك بالقناة اولاً:",
+        reply_markup=keyboard
+    )
+    return
     
     try:
         # التحقق من رابط الدعوة
