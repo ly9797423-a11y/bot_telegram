@@ -1867,7 +1867,7 @@ def handle_referral_command(message):
     """رابط الدعوة"""
     user_id = message.from_user.id
     bot_username = bot.get_me().username
-    link = f"https://t.me/{bot_username}?start=ref_{user_id}_{random.randint(1000,9999)}"
+    link = f"https://t.me/{bot_username}?start=ref_{user_id}"
     bot.reply_to(message, f"📎 رابط دعوتك:\n<code>{link}</code>", parse_mode="HTML")
 
 @bot.message_handler(commands=['daily'])
