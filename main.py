@@ -1282,15 +1282,15 @@ class Keyboards:
         """القائمة الرئيسية للمستخدم"""
         keyboard = InlineKeyboardMarkup(row_width=2)
         buttons = [
-            InlineKeyboardButton("🛍️ خدمات البوت", callback_data="menu_services"),
-            InlineKeyboardButton("💰 تجميع النقاط", callback_data="menu_earn"),
-            InlineKeyboardButton("📢 قناة البوت", callback_data="menu_channel"),
-            InlineKeyboardButton("💳 شحن رصيد", callback_data="menu_charge"),
-            InlineKeyboardButton("📋 طلباتي", callback_data="menu_orders"),
-            InlineKeyboardButton("👤 ملفي الشخصي", callback_data="menu_profile"),
-            InlineKeyboardButton("📞 الدعم الفني", callback_data="menu_support"),
-            InlineKeyboardButton("ℹ️ عن البوت", callback_data="menu_about"),
-            InlineKeyboardButton("🎁 العروض", callback_data="menu_offers")
+        InlineKeyboardButton("🛍️ خدمات البوت", callback_data="menu_services", style="primary"),
+        InlineKeyboardButton("💰 تجميع النقاط", callback_data="menu_earn", style="success"),
+        InlineKeyboardButton("📢 قناة البوت", callback_data="menu_channel", style="primary"),
+        InlineKeyboardButton("💳 شحن رصيد", callback_data="menu_charge", style="success"),
+        InlineKeyboardButton("📋 طلباتي", callback_data="menu_orders", style="primary"),
+        InlineKeyboardButton("👤 ملفي الشخصي", callback_data="menu_profile", style="primary"),
+        InlineKeyboardButton("📞 الدعم الفني", callback_data="menu_support", style="primary"),
+        InlineKeyboardButton("ℹ️ عن البوت", callback_data="menu_about", style="primary")
+        InlineKeyboardButton("🎁 العروض", callback_data="menu_offers", style="primary" )
         ]
         if str(user_id) == str(ADMIN_ID):
             buttons.append(InlineKeyboardButton("⚙️ لوحة التحكم", callback_data="admin_main"))
@@ -1906,12 +1906,25 @@ def handle_about_command(message):
 ━━━━━━━━━━━━━━━━━━
 {settings['about_message']}
 
-✨ المميزات:
-• خدمات متنوعة باسعار منافسة
-• نظام نقاط متكامل
-• دعوة اصدقاء وجمع نقاط
-• هدية يومية مجانية
-• دعم فني 24/7
+قوانـيـن بوت الورد - flowers  : 
+
+ - يجب تنفيذ جميع مايتم قوله في الشروط واذا تم المخالفة يتم حضرك من البوت اساسياً 
+
+ - جميع الطلبات في البوت يحدث فيها تأخير احياناً بسبب ضغط على الخدمة عزيزي المشكلة ليس مشكلتنا ولا نحن نتحكم فيها 
+
+ - رابط الدعوة لايجوز استخدام الرشق لهُ او نقاط غير قانونية اذا كان هناك رشق الى رابط الدعوة الخاص بك سيتم حضرك من البوت نهائياً وخصم جميع گوگيز من البوت 
+
+ - يجب قراءة وصف الخدمة جيداً والانتباه في الخدمة والاسم والوصف وشروطها في بعض الاحيان تكون الخدمة بطيئة او غير ثابتة واجب تنبيهي 
+
+ في حال اردت نقل النقاط من حساب الى حساب اخر يرجى التواصل معنا. 
+
+ - قناة البوت : @FCJCV يجب عليك الغاء الكتم من القناة و روأيتها يومياً وتركيز في كل الكلام الذي يتم نشرة في القناة القناة مخصصة لنشر الخدمات الرسمية واكواد الهداية واسعار الگوگيز الى اخر  
+
+ - اذا طلبت بشكل خاطئ مثلاً : رابط غير صحيح ، حساب خاص ، والى اخر كذلك المشكلة غير مشكلتنا يرجى الانتباه لايوجد تعويض اذا غلطت  
+
+ - التزم في الكلام حتى لا تقع في ورطة ⚠️ 
+
+ • تمويل الورد 🌹
 
 👤 المطور: {ADMIN_USERNAME}
 📅 الاصدار: 12.0
@@ -2304,8 +2317,23 @@ def handle_callbacks(call):
             settings = db.get_settings()
             text = f"""
 💳 شحن الرصيد
-━━━━━━━━━━━━━━━━━━
 لشحن رصيدك يمكنك التواصل مع الدعم الفني:
+
+- اسعار النقاط في بوت  @Right04bot ❤️
+[ اسياسيل - اثير - ماستر كارد - نجوم تليجرام ] 
+ - - - - - - - - - - - - - - - - - 
+الاسعار گ الاتي ؛ 👇
+
+- 10.000 نقطة  = 1$ 
+- 21.000 نقطة= 2$ 
+- 32.000 نقطة = 3$ 
+- 48.000 نقطة = 4$ 
+- 60.000 نقطة = 5$ 
+- 120.000 نقطة= 10$ 
+- 180.000 نقطة = 15$ 
+- 300.000 نقطة = 25$ 
+- 610.000 الف نقطة = 50$ 
+ - - - - - - - - - - - - - - - - -
 
 📞 الدعم الفني: {support}
 
@@ -2382,7 +2410,7 @@ def handle_callbacks(call):
             
             text = f"""
 👤 ملفك الشخصي
-━━━━━━━━━━━━━━━━━━
+ - - - - - - - - - - - - - - - - 
 🆔 <code>{user_id}</code>
 👤 @{user['username']}
 📝 {user['first_name']}
@@ -2395,7 +2423,7 @@ def handle_callbacks(call):
 👥 الاحالات: {len(user.get('referrals', []))}
 🔗 روابط مرسلة: {user.get('links_submitted', 0)}
 📈 المنصرف: {user.get('total_spent', 0)} نقطة
-━━━━━━━━━━━━━━━━━━
+ - - - - - - - - - - - - - - - - 
             """
             bot.edit_message_text(
                 text,
@@ -2409,13 +2437,13 @@ def handle_callbacks(call):
             support = db.data.get("support_username", ADMIN_USERNAME)
             text = f"""
 📞 الدعم الفني
-━━━━━━━━━━━━━━━━━━
+ - - - - - - - - - - - - - - - - 
 للاستفسار او المساعدة:
 
 👤 يوزر الدعم: {support}
 ⚡️ اوقات العمل: 24/7
 💬 للتواصل المباشر اضغط على الزر
-━━━━━━━━━━━━━━━━━━
+ - - - - - - - - - - - - - - - - 
             """
             keyboard = InlineKeyboardMarkup()
             keyboard.add(InlineKeyboardButton("📞 التواصل", url=f"https://t.me/{support.replace('@','')}"))
@@ -2435,12 +2463,25 @@ def handle_callbacks(call):
 ━━━━━━━━━━━━━━━━━━
 {settings['about_message']}
 
-✨ المميزات:
-• خدمات متنوعة باسعار منافسة
-• نظام نقاط متكامل
-• دعوة اصدقاء وجمع نقاط
-• هدية يومية مجانية
-• دعم فني 24/7
+قوانـيـن بوت الورد - flowers  : 
+
+ - يجب تنفيذ جميع مايتم قوله في الشروط واذا تم المخالفة يتم حضرك من البوت اساسياً 
+
+ - جميع الطلبات في البوت يحدث فيها تأخير احياناً بسبب ضغط على الخدمة عزيزي المشكلة ليس مشكلتنا ولا نحن نتحكم فيها 
+
+ - رابط الدعوة لايجوز استخدام الرشق لهُ او نقاط غير قانونية اذا كان هناك رشق الى رابط الدعوة الخاص بك سيتم حضرك من البوت نهائياً وخصم جميع گوگيز من البوت 
+
+ - يجب قراءة وصف الخدمة جيداً والانتباه في الخدمة والاسم والوصف وشروطها في بعض الاحيان تكون الخدمة بطيئة او غير ثابتة واجب تنبيهي 
+
+ في حال اردت نقل النقاط من حساب الى حساب اخر يرجى التواصل معنا. 
+
+ - قناة البوت : @FCJCV يجب عليك الغاء الكتم من القناة و روأيتها يومياً وتركيز في كل الكلام الذي يتم نشرة في القناة القناة مخصصة لنشر الخدمات الرسمية واكواد الهداية واسعار الگوگيز الى اخر  
+
+ - اذا طلبت بشكل خاطئ مثلاً : رابط غير صحيح ، حساب خاص ، والى اخر كذلك المشكلة غير مشكلتنا يرجى الانتباه لايوجد تعويض اذا غلطت  
+
+ - التزم في الكلام حتى لا تقع في ورطة ⚠️ 
+
+ • تمويل الورد 🌹
 
 👤 المطور: {ADMIN_USERNAME}
 📅 الاصدار: 12.0
