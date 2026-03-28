@@ -2521,7 +2521,7 @@ def handle_callbacks(call):
         
         if data == "copy_link":
             bot_username = bot.get_me().username
-            link = f"https://t.me/{bot_username}?start=ref_{user_id}_{random.randint(1000,9999)}"
+            link = f"https://t.me/{bot_username}?start=ref_{user_id}"
             bot.send_message(
                 user_id,
                 f"📎 رابط الدعوة الخاص بك:\n<code>{link}</code>"
