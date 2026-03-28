@@ -1716,12 +1716,13 @@ def handle_start(message):
     try:
         # التحقق من رابط الدعوة
         args = message.text.split()
-        referrer_id = None  # ✅ تعريف المتغير
-        
-        if len(args) > 1 and args[1].startswith("ref_"):
-            parts = args[1].split('_')
-            if len(parts) >= 3:
-                referrer_id = parts[1]
+        referrer_id = None
+
+    if len(args) > 1 and args[1].startswith("ref_"):
+    # الرابط الجديد: ref_6130994941 (بدون رقم عشوائي)
+    parts = args[1].split('_')
+    if len(parts) >= 2:
+        referrer_id = parts[1]  # استخرج الـ user_id
         
         # التحقق اذا كان المستخدم جديد
         existing_user = db.get_user(user_id)
